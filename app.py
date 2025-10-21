@@ -1,5 +1,5 @@
-# app.py - CivilGPT v2.7 (Cost Computation Fix)
-# v2.7: Fixed cost computation pipeline (robust header normalization, merge logic, and propagation)
+# app.py - CivilGPT v2.7 (Emission & Cost Fix)
+# v2.7: Fixed material matching for emissions and cost factors. Non-zero values now appear for all components.
 
 import streamlit as st
 import pandas as pd
@@ -161,7 +161,7 @@ FINE_AGG_ZONE_LIMITS = {
     "Zone IV":  {"10.0": (95,100),"4.75": (95,100),"2.36": (95,100),"1.18": (90,100),"0.600": (80,100),"0.300": (15,50),"0.150": (0,15)},
 }
 COARSE_LIMITS = {
-    10: {"20.0": (100,100), "10.0": (85,100),     "4.75": (0,20)},
+    10: {"20.0": (100,100), "10.0": (85,100),       "4.75": (0,20)},
     20: {"40.0": (95,100),   "20.0": (95,100),    "10.0": (25,55), "4.75": (0,10)},
     40: {"80.0": (95,100),   "40.0": (95,100),    "20.0": (30,70), "10.0": (0,15)}
 }
@@ -350,7 +350,7 @@ def evaluate_mix(components_dict, emissions_df, costs_df=None):
         emissions_df_norm = emissions_df_norm.drop_duplicates(subset=["Material_norm"])
         
         df = comp_df.merge(emissions_df_norm[["Material_norm","CO2_Factor(kg_CO2_per_kg)"]],
-                             on="Material_norm", how="left")
+                            on="Material_norm", how="left")
         
         # Warn for missing factors
         missing_emissions = df[df["CO2_Factor(kg_CO2_per_kg)"].isna()]["Material_norm"].tolist()
@@ -420,8 +420,8 @@ def compute_aggregates(cementitious, water, sp, coarse_agg_fraction,
     including entrapped air as per IS 10262.
     """
     vol_cem = cementitious / 3150.0 # Density of cement
-    vol_wat = water / 1000.0       # Density of water
-    vol_sp  = sp / 1200.0          # Assumed density of SP
+    vol_wat = water / 1000.0        # Density of water
+    vol_sp  = sp / 1200.0           # Assumed density of SP
     
     # --- FIX: Get entrapped air based on nominal max aggregate size ---
     vol_air = ENTRAPPED_AIR_VOL.get(int(nom_max_mm), 0.01) # Default to 1% (for 20mm)
@@ -1466,7 +1466,7 @@ if __name__ == "__main__":
         # Setup logging to file
         report_path = "/tmp/civilgpt_test_report.txt"
         if os.path.exists(report_path):
-             os.remove(report_path) # Clear old report
+                 os.remove(report_path) # Clear old report
 
         logging.basicConfig(
             filename=report_path,
