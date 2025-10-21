@@ -1,8 +1,8 @@
-Material,CO2_Factor(kg_CO2_per_kg)
-Opc 43,0.85
-Fly Ash,0.02
-Ggbs,0.07
-Water,0.00
-Pce Superplasticizer,1.10
-Fine Aggregate,0.005
-Coarse Aggregate,0.004
+Material,Cost(₹/kg)
+Opc 43,7.5
+Fly Ash,1.8
+Ggbs,2.5
+Water,0
+Pce Superplasticizer,70
+Fine Aggregate,0.8
+Coarse Aggregate,0.6
