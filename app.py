@@ -15,6 +15,7 @@ from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import inch
 import logging # --- FIX: Added for test harness ---
+from difflib import get_close_matches # <--- FIX: Added import
 
 # ==============================================================================
 # PART 1: BACKEND LOGIC (CORRECTED & ENHANCED)
@@ -49,6 +50,10 @@ COSTS_COL_MAP = {
     "price": "Cost(₹/kg)",          # From "Price"
     "kg": "Cost(₹/kg)",             # FIX: From "₹/kg"
     "rs_kg": "Cost(₹/kg)",        # FIX: From "rs/kg"
+    # --- FIX: Added requested variants ---
+    "costper": "Cost(₹/kg)",
+    "price_kg": "Cost(₹/kg)",
+    "priceperkg": "Cost(₹/kg)",
 }
 MATERIALS_COL_MAP = {
     "material": "Material",
@@ -71,6 +76,63 @@ def _normalize_header(header):
     # Clean up multiple or trailing underscores
     s = re.sub(r'_+', '_', s)
     return s.strip('_')
+
+
+# --- FIX: Add new function for robust material VALUE normalization ---
+def _normalize_material_value(s: str) -> str:
+    """Normalize material name value to canonical slug for matching."""
+    if s is None:
+        return ""
+    s = str(s).strip().lower()
+    # Replace punctuation, mm numbers, and multiple spaces
+    s = re.sub(r'\b(\d+mm)\b', r'\1', s)  # keep but normalize spacing
+    s = re.sub(r'[^a-z0-9\s]', ' ', s)
+    s = re.sub(r'\s+', ' ', s).strip()
+    # Remove common size tokens (we'll handle '20mm' separately)
+    s = s.replace('mm', '').strip()
+    
+    # canonical synonyms mapping (extend as needed)
+    synonyms = {
+        "m sand": "fine aggregate",
+        "msand": "fine aggregate",
+        "m-sand": "fine aggregate",
+        "m sand": "fine aggregate",
+        "fine aggregate": "fine aggregate",
+        "sand": "fine aggregate",
+        "20 coarse aggregate": "coarse aggregate",
+        "20mm coarse aggregate": "coarse aggregate",
+        "20 coarse": "coarse aggregate",
+        "20": "coarse aggregate",
+        "coarse aggregate": "coarse aggregate",
+        "20mm": "coarse aggregate",
+        "pce superplasticizer": "pce superplasticizer",
+        "pce superplasticiser": "pce superplasticizer",
+        "pce": "pce superplasticizer",
+        "opc 43": "opc 43",
+        "opc 53": "opc 53",
+        "fly ash": "fly ash",
+        "ggbs": "ggbs",
+        "water": "water",
+    }
+    key = s
+    # direct synonym
+    if key in synonyms:
+        return synonyms[key]
+    
+    # fuzzy match against synonyms keys
+    cand = get_close_matches(key, list(synonyms.keys()), n=1, cutoff=0.78)
+    if cand:
+        return synonyms[cand[0]]
+    
+    # fallback: collapse numeric prefixes and try again
+    key2 = re.sub(r'^\d+\s*', '', key)
+    cand = get_close_matches(key2, list(synonyms.keys()), n=1, cutoff=0.78)
+    if cand:
+        return synonyms[cand[0]]
+        
+    # final fallback: return normalized spaces version
+    return key
+
 
 # --- FIX: Helper for robust column normalization ---
 def _normalize_columns(df, column_map):
@@ -243,6 +305,10 @@ def load_data(materials_file=None, emissions_file=None, cost_file=None):
 
     # 2. Normalize columns and handle missing files
     materials = _normalize_columns(materials, MATERIALS_COL_MAP)
+    # --- FIX: Force Material to string *after* normalization ---
+    if "Material" in materials.columns:
+        materials["Material"] = materials["Material"].astype(str).str.strip()
+        
     # --- FIX: Check for 'Material' column as required ---
     if materials.empty or "Material" not in materials.columns:
         st.warning("Could not load 'materials_library.csv' or 'Material' column not found. Using empty library.", icon="ℹ️")
@@ -250,12 +316,20 @@ def load_data(materials_file=None, emissions_file=None, cost_file=None):
         materials = pd.DataFrame(columns=list(dict.fromkeys(MATERIALS_COL_MAP.values())))
 
     emissions = _normalize_columns(emissions, EMISSIONS_COL_MAP)
+    # --- FIX: Force Material to string *after* normalization ---
+    if "Material" in emissions.columns:
+        emissions["Material"] = emissions["Material"].astype(str).str.strip()
+        
     # --- FIX: Check for 'Material' AND the value column ---
     if emissions.empty or "Material" not in emissions.columns or "CO2_Factor(kg_CO2_per_kg)" not in emissions.columns:
         st.warning("⚠️ Could not load 'emission_factors.csv' or required columns ('Material', 'CO2_Factor') not found. CO2 calculations will be zero.")
         emissions = pd.DataFrame(columns=list(dict.fromkeys(EMISSIONS_COL_MAP.values())))
         
     costs = _normalize_columns(costs, COSTS_COL_MAP)
+    # --- FIX: Force Material to string *after* normalization ---
+    if "Material" in costs.columns:
+        costs["Material"] = costs["Material"].astype(str).str.strip()
+        
     # --- FIX: Check for 'Material' AND the value column ---
     if costs.empty or "Material" not in costs.columns or "Cost(₹/kg)" not in costs.columns:
         st.warning("⚠️ Could not load 'cost_factors.csv' or required columns ('Material', 'Cost') not found. Cost calculations will be zero.")
@@ -334,32 +408,39 @@ def run_lab_calibration(lab_df):
 # PART 2: CORE MIX LOGIC (UPDATED)
 # ==============================================================================
 
-# --- v2.7 FIX: This function is now correct, as costs_df will have the
-# --- 'Cost(₹/kg)' column if the file was loaded successfully.
+# --- FIX: REPLACED entire evaluate_mix function with robust normalization logic ---
 def evaluate_mix(components_dict, emissions_df, costs_df=None):
     """Calculates CO2 and Cost for a given mix, with robust merging and warnings."""
     
-    comp_items = [(m.strip().lower(), q) for m, q in components_dict.items() if q > 0.01]
-    comp_df = pd.DataFrame(comp_items, columns=["Material_norm", "Quantity (kg/m3)"])
+    # --- FIX: Create comp_df with original names AND normalized names ---
+    comp_items = [(m.strip(), q) for m, q in components_dict.items() if q > 0.01]
+    comp_df = pd.DataFrame(comp_items, columns=["Material", "Quantity (kg/m3)"])
+    comp_df["Material_norm"] = comp_df["Material"].apply(_normalize_material_value)
     
     # --- CO2 Calculation ---
     if emissions_df is not None and not emissions_df.empty and "CO2_Factor(kg_CO2_per_kg)" in emissions_df.columns:
         emissions_df_norm = emissions_df.copy()
-        emissions_df_norm["Material_norm"] = emissions_df_norm["Material"].str.strip().str.lower()
-        # Keep only the first match if duplicates exist
+        # --- FIX: Use new normalizer on emissions file ---
+        emissions_df_norm['Material'] = emissions_df_norm['Material'].astype(str)
+        emissions_df_norm["Material_norm"] = emissions_df_norm["Material"].apply(_normalize_material_value)
+        # drop duplicates keeping first
         emissions_df_norm = emissions_df_norm.drop_duplicates(subset=["Material_norm"])
         
+        # Merge on the normalized slug
         df = comp_df.merge(emissions_df_norm[["Material_norm","CO2_Factor(kg_CO2_per_kg)"]],
                             on="Material_norm", how="left")
         
-        # Warn for missing factors
-        missing_emissions = df[df["CO2_Factor(kg_CO2_per_kg)"].isna()]["Material_norm"].tolist()
+        # --- FIX: Get missing list from ORIGINAL material name, filter empties ---
+        missing_rows = df[df["CO2_Factor(kg_CO2_per_kg)"].isna()]
+        missing_emissions = [m for m in missing_rows["Material"].tolist() if m and str(m).strip()]
+        
         if missing_emissions:
-            # --- v2.7: Use st.session_state to warn only once per material ---
             if 'warned_emissions' not in st.session_state:
                 st.session_state.warned_emissions = set()
+            # Use the *original* name (e.g., "Fine Aggregate") for the warning set
             new_missing = set(missing_emissions) - st.session_state.warned_emissions
             if new_missing:
+                # Show human-readable names in warning
                 st.warning(f"No emission factors found for: {', '.join(list(new_missing))}. CO2 will be 0 for these materials.", icon="⚠️")
                 st.session_state.warned_emissions.update(new_missing)
         
@@ -373,20 +454,26 @@ def evaluate_mix(components_dict, emissions_df, costs_df=None):
     # --- Cost Calculation ---
     if costs_df is not None and not costs_df.empty and "Cost(₹/kg)" in costs_df.columns:
         costs_df_norm = costs_df.copy()
-        costs_df_norm["Material_norm"] = costs_df_norm["Material"].str.strip().str.lower()
-        # Keep only the first match if duplicates exist
+        # --- FIX: Use new normalizer on costs file ---
+        costs_df_norm['Material'] = costs_df_norm['Material'].astype(str)
+        costs_df_norm["Material_norm"] = costs_df_norm["Material"].apply(_normalize_material_value)
+        # drop duplicates keeping first
         costs_df_norm = costs_df_norm.drop_duplicates(subset=["Material_norm"])
         
+        # Merge on the normalized slug
         df = df.merge(costs_df_norm[["Material_norm", "Cost(₹/kg)"]], on="Material_norm", how="left")
         
-        # Warn for missing costs
-        missing_costs = df[df["Cost(₹/kg)"].isna()]["Material_norm"].tolist()
+        # --- FIX: Get missing list from ORIGINAL material name, filter empties ---
+        missing_rows_cost = df[df["Cost(₹/kg)"].isna()]
+        missing_costs = [m for m in missing_rows_cost["Material"].tolist() if m and str(m).strip()]
+        
         if missing_costs:
-            # --- v2.7: Use st.session_state to warn only once per material ---
             if 'warned_costs' not in st.session_state:
                 st.session_state.warned_costs = set()
+            # Use the *original* name (e.g., "Fine Aggregate") for the warning set
             new_missing = set(missing_costs) - st.session_state.warned_costs
             if new_missing:
+                # Show human-readable names in warning
                 st.warning(f"No cost factors found for: {', '.join(list(new_missing))}. Cost will be 0 for these materials.", icon="⚠️")
                 st.session_state.warned_costs.update(new_missing)
                 
@@ -397,13 +484,15 @@ def evaluate_mix(components_dict, emissions_df, costs_df=None):
     df["Cost (₹/m3)"] = df["Quantity (kg/m3)"] * df["Cost(₹/kg)"]
     
     # --- Final Formatting ---
-    df["Material"] = df["Material_norm"].str.title()
+    # Use the original "Material" column from comp_df, which is human-readable.
+    df["Material"] = df["Material"].str.title()
+    
     # Ensure all required columns exist, even if empty
-    for col in ["Material","Quantity (kg/m3)","CO2_Factor(kg_CO2_per_kg)","CO2_Emissions (kg/m3)","Cost(₹/kg)","Cost (₹/m3)"]:
-        if col not in df.columns:
+    for col in ["Material","Quantity (kg/m3)","CO2_Factor(kg_CO2_per_kg)","CO2_Emissions (kg/m3)","Cost(₹/kg)","Cost (₹/m3)"]:<br>        if col not in df.columns:
             df[col] = 0.0 if "kg" in col or "m3" in col else ""
             
     return df[["Material","Quantity (kg/m3)","CO2_Factor(kg_CO2_per_kg)","CO2_Emissions (kg/m3)","Cost(₹/kg)","Cost (₹/m3)"]]
+
 
 # --- FIX: Unchanged aggregate_correction, logic is correct ---
 def aggregate_correction(delta_moisture_pct: float, agg_mass_ssd: float):
@@ -478,8 +567,7 @@ def sanity_check_mix(meta, df):
     try:
         cement, water, fine, coarse, sp = float(meta.get("cement", 0)), float(meta.get("water_target", 0)), float(meta.get("fine", 0)), float(meta.get("coarse", 0)), float(meta.get("sp", 0))
         unit_wt = float(df["Quantity (kg/m3)"].sum())
-    except Exception: return ["Insufficient data to run sanity checks."]
-    
+    except Exception: return ["Insufficient data to run sanity checks."]<br>    
     # (Original "Low cement content" logic preserved)
     if cement > 500: warnings.append(f"High cement content ({cement:.1f} kg/m³). Increases cost, shrinkage, and CO₂.")
     if water < 140 or water > 220: warnings.append(f"Water content ({water:.1f} kg/m³) is outside the typical range of 140-220 kg/m³.")
@@ -536,10 +624,8 @@ def sieve_check_fa(df: pd.DataFrame, zone: str):
                 ok = False; msgs.append(f"Missing sieve size: {sieve} mm."); continue
             p = float(row["PercentPassing"].iloc[0])
             if not (lo <= p <= hi): ok = False; msgs.append(f"Sieve {sieve} mm: {p:.1f}% passing is outside the required range of {lo}-{hi}%.")
-        if ok: msgs = [f"Fine aggregate conforms to IS 383 for {zone}."]
-        return ok, msgs
-    except: return False, ["Invalid fine aggregate CSV format. Ensure 'Sieve_mm' and 'PercentPassing' columns exist."]
-
+        if ok: msgs = [f"Fine aggregate conforms to IS 383 for {zone}."]<br>        return ok, msgs
+    except: return False, ["Invalid fine aggregate CSV format. Ensure 'Sieve_mm' and 'PercentPassing' columns exist."]<br>
 def sieve_check_ca(df: pd.DataFrame, nominal_mm: int):
     try:
         limits, ok, msgs = COARSE_LIMITS[int(nominal_mm)], True, []
@@ -549,10 +635,8 @@ def sieve_check_ca(df: pd.DataFrame, nominal_mm: int):
                 ok = False; msgs.append(f"Missing sieve size: {sieve} mm."); continue
             p = float(row["PercentPassing"].iloc[0])
             if not (lo <= p <= hi): ok = False; msgs.append(f"Sieve {sieve} mm: {p:.1f}% passing is outside the required range of {lo}-{hi}%.")
-        if ok: msgs = [f"Coarse aggregate conforms to IS 383 for {nominal_mm} mm graded aggregate."]
-        return ok, msgs
-    except: return False, ["Invalid coarse aggregate CSV format. Ensure 'Sieve_mm' and 'PercentPassing' columns exist."]
-
+        if ok: msgs = [f"Coarse aggregate conforms to IS 383 for {nominal_mm} mm graded aggregate."]<br>        return ok, msgs
+    except: return False, ["Invalid coarse aggregate CSV format. Ensure 'Sieve_mm' and 'PercentPassing' columns exist."]<br>
 
 def generate_mix(grade, exposure, nom_max, target_slump, agg_shape, fine_zone, emissions, costs, cement_choice, material_props, use_sp=True, sp_reduction=0.18, optimize_cost=False, wb_min=0.35, wb_steps=6, max_flyash_frac=0.3, max_ggbs_frac=0.5, scm_step=0.1, fine_fraction_override=None):
     w_b_limit, min_cem_exp = float(EXPOSURE_WB_LIMITS[exposure]), float(EXPOSURE_MIN_CEMENT[exposure])
@@ -733,25 +817,7 @@ def main():
     )
 
     # --- Page Styling ---
-    st.markdown("""
-    <style>
-        /* Center the title and main interface elements */
-        .main .block-container {
-            padding-top: 2rem;
-            padding-bottom: 2rem;
-            padding-left: 5rem;
-            padding-right: 5rem;
-        }
-        .st-emotion-cache-1y4p8pa {
-            max-width: 100%;
-        }
-        /* Style the main text area like a prompt box */
-        .stTextArea [data-baseweb=base-input] {
-            border-color: #4A90E2;
-            box-shadow: 0 0 5px #4A90E2;
-        }
-    </style>
-    """, unsafe_allow_html=True)
+    st.markdown("""<br>    <style><br>        /* Center the title and main interface elements */<br>        .main .block-container {<br>            padding-top: 2rem;<br>            padding-bottom: 2rem;<br>            padding-left: 5rem;<br>            padding-right: 5rem;<br>        }<br>        .st-emotion-cache-1y4p8pa {<br>            max-width: 100%;<br>        }<br>        /* Style the main text area like a prompt box */<br>        .stTextArea [data-baseweb=base-input] {<br>            border-color: #4A90E2;<br>            box-shadow: 0 0 5px #4A90E2;<br>        }<br>    </style><br>    """, unsafe_allow_html=True)
 
 
     # --- Landing Page / Main Interface ---
@@ -849,16 +915,7 @@ def main():
             cost_file = st.file_uploader("Cost Factors (₹/kg)", type=["csv"], key="cost_csv")
 
         with st.sidebar.expander("🔬 Lab Calibration Dataset"):
-            st.markdown("""
-            Upload a CSV with lab results to compare against CivilGPT's predictions.
-            **Required columns:**
-            - `grade` (e.g., M30)
-            - `exposure` (e.g., Severe)
-            - `slump` (mm)
-            - `nom_max` (mm)
-            - `cement_choice` (e.g., OPC 43)
-            - `actual_strength` (MPa)
-            """)
+            st.markdown("""<br>            Upload a CSV with lab results to compare against CivilGPT's predictions.<br>            **Required columns:**<br>            - `grade` (e.g., M30)<br>            - `exposure` (e.g., Severe)<br>            - `slump` (mm)<br>            - `nom_max` (mm)<br>            - `cement_choice` (e.g., OPC 43)<br>            - `actual_strength` (MPa)<br>            """)
             lab_csv = st.file_uploader("Upload Lab Data CSV", type=["csv"], key="lab_csv")
 
         st.sidebar.markdown("---")
@@ -1136,53 +1193,7 @@ def main():
 
         def display_calculation_walkthrough(meta):
             st.header("Step-by-Step Calculation Walkthrough")
-            st.markdown(f"""
-            This is a summary of how the **Optimized Mix** was designed according to **IS 10262:2019**.
-
-            #### 1. Target Mean Strength
-            - **Characteristic Strength (fck):** `{meta['fck']}` MPa (from Grade {meta['grade']})
-            - **Assumed Standard Deviation (S):** `{meta['stddev_S']}` MPa (for '{inputs['qc_level']}' quality control)
-            - **Target Mean Strength (f'ck):** `fck + 1.65 * S = {meta['fck']} + 1.65 * {meta['stddev_S']} =` **`{meta['fck_target']:.2f}` MPa**
-
-            #### 2. Water Content
-            - **Basis:** IS 10262, Table 4, for `{meta['nom_max']}` mm nominal max aggregate size.
-            - **Adjustments:** Slump (`{meta['slump']}` mm), aggregate shape ('{inputs['agg_shape']}'), and superplasticizer use.
-            - **Final Target Water (SSD basis):** **`{meta['water_target']:.1f}` kg/m³**
-
-            #### 3. Water-Binder (w/b) Ratio
-            - **Constraint:** Maximum w/b ratio for `{meta['exposure']}` exposure is `{EXPOSURE_WB_LIMITS[meta['exposure']]}`.
-            - **Optimizer Selection:** The optimizer selected the lowest w/b ratio that resulted in a feasible, low-carbon mix.
-            - **Selected w/b Ratio:** **`{meta['w_b']:.3f}`**
-
-            #### 4. Binder Content
-            - **Initial Binder (from w/b):** `{meta['water_target']:.1f} / {meta['w_b']:.3f} = {(meta['water_target']/meta['w_b']):.1f}` kg/m³
-            - **Constraints Check:**
-                - Min. for `{meta['exposure']}` exposure: `{EXPOSURE_MIN_CEMENT[meta['exposure']]}` kg/m³
-                - Typical range for `{meta['grade']}`: `{meta['binder_range'][0]}` - `{meta['binder_range'][1]}` kg/m³
-            - **Final Adjusted Binder Content:** **`{meta['cementitious']:.1f}` kg/m³**
-
-            #### 5. SCM & Cement Content
-            - **Optimizer Goal:** Minimize CO₂/cost by replacing cement with SCMs (Fly Ash, GGBS).
-            - **Selected SCM Fraction:** `{meta['scm_total_frac']*100:.0f}%`
-            - **Material Quantities:**
-                - **Cement:** `{meta['cement']:.1f}` kg/m³
-                - **Fly Ash:** `{meta['flyash']:.1f}` kg/m³
-                - **GGBS:** `{meta['ggbs']:.1f}` kg/m³
-
-            #### 6. Aggregate Proportioning (IS 10262, Table 5)
-            - **Basis:** Volume of coarse aggregate for `{meta['nom_max']}` mm aggregate and fine aggregate `{inputs['fine_zone']}`.
-            - **Adjustment:** Corrected for the final w/b ratio of `{meta['w_b']:.3f}`.
-            - **Coarse Aggregate Fraction (by volume):** **`{meta['coarse_agg_fraction']:.3f}`**
-
-            #### 7. Final Quantities (with Moisture Correction)
-            - **Fine Aggregate (SSD):** `{(meta['fine'] / (1 + meta['material_props']['moisture_fa']/100)):.1f}` kg/m³
-            - **Coarse Aggregate (SSD):** `{(meta['coarse'] / (1 + meta['material_props']['moisture_ca']/100)):.1f}` kg/m³
-            - **Moisture Correction:** Adjusted for `{meta['material_props']['moisture_fa']}%` free moisture in fine and `{meta['material_props']['moisture_ca']}%` in coarse aggregate.
-            - **Final Batch Weights:**
-                - **Water:** **`{meta['water_final']:.1f}` kg/m³**
-                - **Fine Aggregate:** **`{meta['fine']:.1f}` kg/m³**
-                - **Coarse Aggregate:** **`{meta['coarse']:.1f}` kg/m³**
-            """)
+            st.markdown(f"""<br>            This is a summary of how the **Optimized Mix** was designed according to **IS 10262:2019**.<br><br>            #### 1. Target Mean Strength<br>            - **Characteristic Strength (fck):** `{meta['fck']}` MPa (from Grade {meta['grade']})<br>            - **Assumed Standard Deviation (S):** `{meta['stddev_S']}` MPa (for '{inputs['qc_level']}' quality control)<br>            - **Target Mean Strength (f'ck):** `fck + 1.65 * S = {meta['fck']} + 1.65 * {meta['stddev_S']} =` **`{meta['fck_target']:.2f}` MPa**<br><br>            #### 2. Water Content<br>            - **Basis:** IS 10262, Table 4, for `{meta['nom_max']}` mm nominal max aggregate size.<br>            - **Adjustments:** Slump (`{meta['slump']}` mm), aggregate shape ('{inputs['agg_shape']}'), and superplasticizer use.<br>            - **Final Target Water (SSD basis):** **`{meta['water_target']:.1f}` kg/m³**<br><br>            #### 3. Water-Binder (w/b) Ratio<br>            - **Constraint:** Maximum w/b ratio for `{meta['exposure']}` exposure is `{EXPOSURE_WB_LIMITS[meta['exposure']]}`.<br>            - **Optimizer Selection:** The optimizer selected the lowest w/b ratio that resulted in a feasible, low-carbon mix.<br>            - **Selected w/b Ratio:** **`{meta['w_b']:.3f}`**<br><br>            #### 4. Binder Content<br>            - **Initial Binder (from w/b):** `{meta['water_target']:.1f} / {meta['w_b']:.3f} = {(meta['water_target']/meta['w_b']):.1f}` kg/m³<br>            - **Constraints Check:**<br>                - Min. for `{meta['exposure']}` exposure: `{EXPOSURE_MIN_CEMENT[meta['exposure']]}` kg/m³<br>                - Typical range for `{meta['grade']}`: `{meta['binder_range'][0]}` - `{meta['binder_range'][1]}` kg/m³<br>            - **Final Adjusted Binder Content:** **`{meta['cementitious']:.1f}` kg/m³**<br><br>            #### 5. SCM & Cement Content<br>            - **Optimizer Goal:** Minimize CO₂/cost by replacing cement with SCMs (Fly Ash, GGBS).<br>            - **Selected SCM Fraction:** `{meta['scm_total_frac']*100:.0f}%`<br>            - **Material Quantities:**<br>                - **Cement:** `{meta['cement']:.1f}` kg/m³<br>                - **Fly Ash:** `{meta['flyash']:.1f}` kg/m³<br>                - **GGBS:** `{meta['ggbs']:.1f}` kg/m³<br><br>            #### 6. Aggregate Proportioning (IS 10262, Table 5)<br>            - **Basis:** Volume of coarse aggregate for `{meta['nom_max']}` mm aggregate and fine aggregate `{inputs['fine_zone']}`.<br>            - **Adjustment:** Corrected for the final w/b ratio of `{meta['w_b']:.3f}`.<br>            - **Coarse Aggregate Fraction (by volume):** **`{meta['coarse_agg_fraction']:.3f}`**<br><br>            #### 7. Final Quantities (with Moisture Correction)<br>            - **Fine Aggregate (SSD):** `{(meta['fine'] / (1 + meta['material_props']['moisture_fa']/100)):.1f}` kg/m³<br>            - **Coarse Aggregate (SSD):** `{(meta['coarse'] / (1 + meta['material_props']['moisture_ca']/100)):.1f}` kg/m³<br>            - **Moisture Correction:** Adjusted for `{meta['material_props']['moisture_fa']}%` free moisture in fine and `{meta['material_props']['moisture_ca']}%` in coarse aggregate.<br>            - **Final Batch Weights:**<br>                - **Water:** **`{meta['water_final']:.1f}` kg/m³**<br>                - **Fine Aggregate:** **`{meta['fine']:.1f}` kg/m³**<br>                - **Coarse Aggregate:** **`{meta['coarse']:.1f}` kg/m³**<br>            """)
 
 
         with tab2:
@@ -1424,8 +1435,7 @@ def main():
                     st.error(f"Failed to read or process the lab data CSV file: {e}", icon="💥")
             else:
                 st.info(
-                    "Upload a lab data CSV in the sidebar to automatically compare CivilGPT's "
-                    "target strength calculations against your real-world results.",
+                    "Upload a lab data CSV in the sidebar to automatically compare CivilGPT's "<br>                    "target strength calculations against your real-world results.",
                     icon="ℹ️"
                 )
                 
@@ -1436,12 +1446,7 @@ def main():
         st.info("Enter your concrete requirements in the prompt box above, or switch to manual mode to specify parameters.", icon="👆")
         st.markdown("---")
         st.subheader("How It Works")
-        st.markdown("""
-        1.  **Input Requirements**: Describe your project needs in plain English (e.g., "M25 concrete for moderate exposure") or use the manual sidebar for detailed control.
-        2.  **IS Code Compliance**: The app generates dozens of candidate mixes, ensuring each one adheres to the durability and strength requirements of Indian Standards **IS 10262** and **IS 456**.
-        3.  **Sustainability Optimization**: It then calculates the embodied carbon (CO₂e) and cost for every compliant mix.
-        4.  **Best Mix Selection**: Finally, it presents the mix with the lowest carbon footprint (or cost) alongside a standard OPC baseline for comparison.
-        """)
+        st.markdown("""<br>        1.  **Input Requirements**: Describe your project needs in plain English (e.g., "M25 concrete for moderate exposure") or use the manual sidebar for detailed control.<br>        2.  **IS Code Compliance**: The app generates dozens of candidate mixes, ensuring each one adheres to the durability and strength requirements of Indian Standards **IS 10262** and **IS 456**.<br>        3.  **Sustainability Optimization**: It then calculates the embodied carbon (CO₂e) and cost for every compliant mix.<br>        4.  **Best Mix Selection**: Finally, it presents the mix with the lowest carbon footprint (or cost) alongside a standard OPC baseline for comparison.<br>        """)
 
 
 # --- FIX: Add __name__ == "__main__" guard and test harness ---
@@ -1478,26 +1483,33 @@ if __name__ == "__main__":
         print(f"Logging test results to {report_path}...")
 
         try:
-            # 1. Create minimal dataframes
-            test_emissions_df = pd.DataFrame([
-                {"Material": "OPC 43", "CO2_Factor(kg_CO2_per_kg)": 0.85},
-                {"Material": "Water", "CO2_Factor(kg_CO2_per_kg)": 0.001},
-                {"Material": "Fine Aggregate", "CO2_Factor(kg_CO2_per_kg)": 0.01},
-                {"Material": "Coarse Aggregate", "CO2_Factor(kg_CO2_per_kg)": 0.01},
-                {"Material": "PCE Superplasticizer", "CO2_Factor(kg_CO2_per_kg)": 0.5},
-                {"Material": "Fly Ash", "CO2_Factor(kg_CO2_per_kg)": 0.02},
-                {"Material": "GGBS", "CO2_Factor(kg_CO2_per_kg)": 0.05},
-            ])
-            test_costs_df = pd.DataFrame([
-                {"Material": "OPC 43", "Cost(₹/kg)": 6.5},
-                {"Material": "Water", "Cost(₹/kg)": 0.01},
-                {"Material": "Fine Aggregate", "Cost(₹/kg)": 0.6},
-                {"Material": "Coarse Aggregate", "Cost(₹/kg)": 0.6},
-                {"Material": "PCE Superplasticizer", "Cost(₹/kg)": 80.0},
-                {"Material": "Fly Ash", "Cost(₹/kg)": 2.0},
-                {"Material": "GGBS", "Cost(₹/kg)": 3.0},
-            ])
-            logging.info("Created test emissions and cost data.")
+            # --- FIX: Load data from default CSVs to test normalization pipeline ---
+            logging.info("Loading data from default CSVs (data/emission_factors.csv, data/cost_factors.csv)...")
+            
+            # Clear cache and set up mock session state for warning capture
+            load_data.clear_cache()
+            if 'warned_emissions' not in st.session_state: st.session_state.warned_emissions = set()
+            if 'warned_costs' not in st.session_state: st.session_state.warned_costs = set()
+            st.session_state.warned_emissions.clear()
+            st.session_state.warned_costs.clear()
+
+            # Call load_data with default (None) arguments
+            test_materials_df, test_emissions_df, test_costs_df = load_data()
+
+            if test_emissions_df.empty or "CO2_Factor(kg_CO2_per_kg)" not in test_emissions_df.columns:
+                logging.error("FAIL: Failed to load 'emission_factors.csv' or its columns. Check file path and headers.")
+                raise ValueError("Test emissions file failed to load.")
+            else:
+                logging.info("Loaded emission_factors.csv successfully.")
+            
+            if test_costs_df.empty or "Cost(₹/kg)" not in test_costs_df.columns:
+                logging.error("FAIL: Failed to load 'cost_factors.csv' or its columns. Check file path and headers ('Cost', 'rs/kg', etc.).")
+                raise ValueError("Test cost file failed to load.")
+            else:
+                logging.info("Loaded cost_factors.csv successfully.")
+            
+            logging.info("Test dataframes loaded and normalized.")
+            # --- END of new loading block ---
             
             # 2. Define test inputs
             test_material_props = {'sg_fa': 2.65, 'moisture_fa': 1.0, 'sg_ca': 2.70, 'moisture_ca': 0.5}
@@ -1528,6 +1540,31 @@ if __name__ == "__main__":
             # 4. Validate baseline results
             co2_total_base = base_meta.get("co2_total", 0.0)
             cost_total_base = base_meta.get("cost_total", 0.0)
+            
+            # --- FIX: Add specific warning checks ---
+            logging.info(f"Checking for spurious warnings. Emissions: {st.session_state.warned_emissions} | Costs: {st.session_state.warned_costs}")
+            
+            # Check for the *human-readable* names used in the `mix` dict
+            if "Fine Aggregate" in st.session_state.warned_emissions or "fine aggregate" in st.session_state.warned_emissions:
+                logging.error("FAIL: 'Fine Aggregate' was in warned_emissions.")
+            else:
+                logging.info("SUCCESS: 'Fine Aggregate' was NOT in warned_emissions.")
+
+            if "Coarse Aggregate" in st.session_state.warned_emissions or "coarse aggregate" in st.session_state.warned_emissions:
+                logging.error("FAIL: 'Coarse Aggregate' was in warned_emissions.")
+            else:
+                logging.info("SUCCESS: 'Coarse Aggregate' was NOT in warned_emissions.")
+            
+            if "Fine Aggregate" in st.session_state.warned_costs or "fine aggregate" in st.session_state.warned_costs:
+                logging.error("FAIL: 'Fine Aggregate' was in warned_costs.")
+            else:
+                logging.info("SUCCESS: 'Fine Aggregate' was NOT in warned_costs.")
+            
+            if "Coarse Aggregate" in st.session_state.warned_costs or "coarse aggregate" in st.session_state.warned_costs:
+                logging.error("FAIL: 'Coarse Aggregate' was in warned_costs.")
+            else:
+                logging.info("SUCCESS: 'Coarse Aggregate' was NOT in warned_costs.")
+            # --- END of warning checks ---
             
             if co2_total_base <= 0:
                 logging.error(f"FAIL: Baseline CO2 is zero or negative: {co2_total_base}")
