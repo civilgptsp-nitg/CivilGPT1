@@ -6,6 +6,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import os
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 from io import BytesIO, StringIO
 import json
 import traceback
@@ -49,7 +50,7 @@ COSTS_COL_MAP = {
     "costperkg": "Cost(₹/kg)",      # From "costperkg"
     "price": "Cost(₹/kg)",          # From "Price"
     "kg": "Cost(₹/kg)",             # FIX: From "₹/kg"
-    "rs_kg": "Cost(₹/kg)",        # FIX: From "rs/kg"
+    "rs_kg": "Cost(₹/kg)",      # FIX: From "rs/kg"
     # --- FIX: Added requested variants ---
     "costper": "Cost(₹/kg)",
     "price_kg": "Cost(₹/kg)",
@@ -178,7 +179,13 @@ LAB_FILE = "lab_processed_mgrades_only.xlsx"
 MIX_FILE = "concrete_mix_design_data_cleaned_standardized.xlsx"
 
 def safe_load_excel(name):
-    for p in [name, f"data/{name}"]:
+    # name is e.g., "lab_processed_mgrades_only.xlsx"
+    # Try paths relative to the script's location
+    paths_to_try = [
+        os.path.join(SCRIPT_DIR, name),
+        os.path.join(SCRIPT_DIR, "data", name)
+    ]
+    for p in paths_to_try:
         if os.path.exists(p):
             try:
                 return pd.read_excel(p)
@@ -186,7 +193,9 @@ def safe_load_excel(name):
                 try:
                     return pd.read_excel(p, engine="openpyxl")
                 except Exception:
+                    st.warning(f"Failed to read Excel file at {p}")
                     return None
+    # st.warning(f"Could not find Excel file: {name}") # Optional: can be noisy
     return None
 
 lab_df = safe_load_excel(LAB_FILE)
@@ -223,9 +232,9 @@ FINE_AGG_ZONE_LIMITS = {
     "Zone IV":  {"10.0": (95,100),"4.75": (95,100),"2.36": (95,100),"1.18": (90,100),"0.600": (80,100),"0.300": (15,50),"0.150": (0,15)},
 }
 COARSE_LIMITS = {
-    10: {"20.0": (100,100), "10.0": (85,100),       "4.75": (0,20)},
-    20: {"40.0": (95,100),   "20.0": (95,100),    "10.0": (25,55), "4.75": (0,10)},
-    40: {"80.0": (95,100),   "40.0": (95,100),    "20.0": (30,70), "10.0": (0,15)}
+    10: {"20.0": (100,100), "10.0": (85,100),        "4.75": (0,20)},
+    20: {"40.0": (95,100),   "20.0": (95,100),     "10.0": (25,55), "4.75": (0,10)},
+    40: {"80.0": (95,100),   "40.0": (95,100),     "20.0": (30,70), "10.0": (0,15)}
 }
 
 # Parsers (Original, Unchanged)
@@ -288,14 +297,20 @@ def load_data(materials_file=None, emissions_file=None, cost_file=None):
 
     def _load_fallback(default_names):
         """Tries to read a CSV from a list of default paths (root and data/)."""
-        for p in default_names:
+        # default_names is ["cost_factors.csv", "data/cost_factors.csv"]
+        # We build absolute paths based on the script's location.
+        paths_to_try = [
+            os.path.join(SCRIPT_DIR, default_names[0]), # Path to root file
+            os.path.join(SCRIPT_DIR, default_names[1])  # Path to data/ file
+        ]
+        
+        for p in paths_to_try:
             if os.path.exists(p):
                 try:
-                    # --- FIX: Found file, attempt to read ---
                     return pd.read_csv(p)
                 except Exception as e:
                     st.warning(f"Could not read {p}: {e}")
-        return None # --- FIX: Return None if all paths fail ---
+        return None # Return None if all paths fail
 
     # 1. Load data from uploaded files or fallbacks
     # --- FIX: Use fallback logic for all files ---
@@ -504,15 +519,15 @@ def aggregate_correction(delta_moisture_pct: float, agg_mass_ssd: float):
 
 # --- FIX: Rewritten compute_aggregates to include entrapped air ---
 def compute_aggregates(cementitious, water, sp, coarse_agg_fraction,
-                       nom_max_mm, # <-- FIX: Added nom_max_mm
-                       density_fa=2650.0, density_ca=2700.0):
+                        nom_max_mm, # <-- FIX: Added nom_max_mm
+                        density_fa=2650.0, density_ca=2700.0):
     """
     Computes aggregate volumes and masses based on absolute volume method,
     including entrapped air as per IS 10262.
     """
     vol_cem = cementitious / 3150.0 # Density of cement
-    vol_wat = water / 1000.0        # Density of water
-    vol_sp  = sp / 1200.0           # Assumed density of SP
+    vol_wat = water / 1000.0       # Density of water
+    vol_sp  = sp / 1200.0          # Assumed density of SP
     
     # --- FIX: Get entrapped air based on nominal max aggregate size ---
     vol_air = ENTRAPPED_AIR_VOL.get(int(nom_max_mm), 0.01) # Default to 1% (for 20mm)
@@ -829,7 +844,25 @@ def main():
     )
 
     # --- Page Styling ---
-    st.markdown("""<br>    <style><br>        /* Center the title and main interface elements */<br>        .main .block-container {<br>            padding-top: 2rem;<br>            padding-bottom: 2rem;<br>            padding-left: 5rem;<br>            padding-right: 5rem;<br>        }<br>        .st-emotion-cache-1y4p8pa {<br>            max-width: 100%;<br>        }<br>        /* Style the main text area like a prompt box */<br>        .stTextArea [data-baseweb=base-input] {<br>            border-color: #4A90E2;<br>            box-shadow: 0 0 5px #4A90E2;<br>        }<br>    </style><br>    """, unsafe_allow_html=True)
+    st.markdown("""
+    <style>
+        /* Center the title and main interface elements */
+        .main .block-container {
+            padding-top: 2rem;
+            padding-bottom: 2rem;
+            padding-left: 5rem;
+            padding-right: 5rem;
+        }
+        .st-emotion-cache-1y4p8pa {
+            max-width: 100%;
+        }
+        /* Style the main text area like a prompt box */
+        .stTextArea [data-baseweb=base-input] {
+            border-color: #4A90E2;
+            box-shadow: 0 0 5px #4A90E2;
+        }
+    </style>
+    """, unsafe_allow_html=True)
 
 
     # --- Landing Page / Main Interface ---
@@ -927,7 +960,16 @@ def main():
             cost_file = st.file_uploader("Cost Factors (₹/kg)", type=["csv"], key="cost_csv")
 
         with st.sidebar.expander("🔬 Lab Calibration Dataset"):
-            st.markdown("""<br>            Upload a CSV with lab results to compare against CivilGPT's predictions.<br>            **Required columns:**<br>            - `grade` (e.g., M30)<br>            - `exposure` (e.g., Severe)<br>            - `slump` (mm)<br>            - `nom_max` (mm)<br>            - `cement_choice` (e.g., OPC 43)<br>            - `actual_strength` (MPa)<br>            """)
+            st.markdown("""
+            Upload a CSV with lab results to compare against CivilGPT's predictions.
+            **Required columns:**
+            - `grade` (e.g., M30)
+            - `exposure` (e.g., Severe)
+            - `slump` (mm)
+            - `nom_max` (mm)
+            - `cement_choice` (e.g., OPC 43)
+            - `actual_strength` (MPa)
+            """)
             lab_csv = st.file_uploader("Upload Lab Data CSV", type=["csv"], key="lab_csv")
 
         st.sidebar.markdown("---")
@@ -1205,7 +1247,53 @@ def main():
 
         def display_calculation_walkthrough(meta):
             st.header("Step-by-Step Calculation Walkthrough")
-            st.markdown(f"""<br>            This is a summary of how the **Optimized Mix** was designed according to **IS 10262:2019**.<br><br>            #### 1. Target Mean Strength<br>            - **Characteristic Strength (fck):** `{meta['fck']}` MPa (from Grade {meta['grade']})<br>            - **Assumed Standard Deviation (S):** `{meta['stddev_S']}` MPa (for '{inputs['qc_level']}' quality control)<br>            - **Target Mean Strength (f'ck):** `fck + 1.65 * S = {meta['fck']} + 1.65 * {meta['stddev_S']} =` **`{meta['fck_target']:.2f}` MPa**<br><br>            #### 2. Water Content<br>            - **Basis:** IS 10262, Table 4, for `{meta['nom_max']}` mm nominal max aggregate size.<br>            - **Adjustments:** Slump (`{meta['slump']}` mm), aggregate shape ('{inputs['agg_shape']}'), and superplasticizer use.<br>            - **Final Target Water (SSD basis):** **`{meta['water_target']:.1f}` kg/m³**<br><br>            #### 3. Water-Binder (w/b) Ratio<br>            - **Constraint:** Maximum w/b ratio for `{meta['exposure']}` exposure is `{EXPOSURE_WB_LIMITS[meta['exposure']]}`.<br>            - **Optimizer Selection:** The optimizer selected the lowest w/b ratio that resulted in a feasible, low-carbon mix.<br>            - **Selected w/b Ratio:** **`{meta['w_b']:.3f}`**<br><br>            #### 4. Binder Content<br>            - **Initial Binder (from w/b):** `{meta['water_target']:.1f} / {meta['w_b']:.3f} = {(meta['water_target']/meta['w_b']):.1f}` kg/m³<br>            - **Constraints Check:**<br>                - Min. for `{meta['exposure']}` exposure: `{EXPOSURE_MIN_CEMENT[meta['exposure']]}` kg/m³<br>                - Typical range for `{meta['grade']}`: `{meta['binder_range'][0]}` - `{meta['binder_range'][1]}` kg/m³<br>            - **Final Adjusted Binder Content:** **`{meta['cementitious']:.1f}` kg/m³**<br><br>            #### 5. SCM & Cement Content<br>            - **Optimizer Goal:** Minimize CO₂/cost by replacing cement with SCMs (Fly Ash, GGBS).<br>            - **Selected SCM Fraction:** `{meta['scm_total_frac']*100:.0f}%`<br>            - **Material Quantities:**<br>                - **Cement:** `{meta['cement']:.1f}` kg/m³<br>                - **Fly Ash:** `{meta['flyash']:.1f}` kg/m³<br>                - **GGBS:** `{meta['ggbs']:.1f}` kg/m³<br><br>            #### 6. Aggregate Proportioning (IS 10262, Table 5)<br>            - **Basis:** Volume of coarse aggregate for `{meta['nom_max']}` mm aggregate and fine aggregate `{inputs['fine_zone']}`.<br>            - **Adjustment:** Corrected for the final w/b ratio of `{meta['w_b']:.3f}`.<br>            - **Coarse Aggregate Fraction (by volume):** **`{meta['coarse_agg_fraction']:.3f}`**<br><br>            #### 7. Final Quantities (with Moisture Correction)<br>            - **Fine Aggregate (SSD):** `{(meta['fine'] / (1 + meta['material_props']['moisture_fa']/100)):.1f}` kg/m³<br>            - **Coarse Aggregate (SSD):** `{(meta['coarse'] / (1 + meta['material_props']['moisture_ca']/100)):.1f}` kg/m³<br>            - **Moisture Correction:** Adjusted for `{meta['material_props']['moisture_fa']}%` free moisture in fine and `{meta['material_props']['moisture_ca']}%` in coarse aggregate.<br>            - **Final Batch Weights:**<br>                - **Water:** **`{meta['water_final']:.1f}` kg/m³**<br>                - **Fine Aggregate:** **`{meta['fine']:.1f}` kg/m³**<br>                - **Coarse Aggregate:** **`{meta['coarse']:.1f}` kg/m³**<br>            """)
+            st.markdown(f"""
+            This is a summary of how the **Optimized Mix** was designed according to **IS 10262:2019**.
+
+            #### 1. Target Mean Strength
+            - **Characteristic Strength (fck):** `{meta['fck']}` MPa (from Grade {meta['grade']})
+            - **Assumed Standard Deviation (S):** `{meta['stddev_S']}` MPa (for '{inputs['qc_level']}' quality control)
+            - **Target Mean Strength (f'ck):** `fck + 1.65 * S = {meta['fck']} + 1.65 * {meta['stddev_S']} =` **`{meta['fck_target']:.2f}` MPa**
+
+            #### 2. Water Content
+            - **Basis:** IS 10262, Table 4, for `{meta['nom_max']}` mm nominal max aggregate size.
+            - **Adjustments:** Slump (`{meta['slump']}` mm), aggregate shape ('{inputs['agg_shape']}'), and superplasticizer use.
+            - **Final Target Water (SSD basis):** **`{meta['water_target']:.1f}` kg/m³**
+
+            #### 3. Water-Binder (w/b) Ratio
+            - **Constraint:** Maximum w/b ratio for `{meta['exposure']}` exposure is `{EXPOSURE_WB_LIMITS[meta['exposure']]}`.
+            - **Optimizer Selection:** The optimizer selected the lowest w/b ratio that resulted in a feasible, low-carbon mix.
+            - **Selected w/b Ratio:** **`{meta['w_b']:.3f}`**
+
+            #### 4. Binder Content
+            - **Initial Binder (from w/b):** `{meta['water_target']:.1f} / {meta['w_b']:.3f} = {(meta['water_target']/meta['w_b']):.1f}` kg/m³
+            - **Constraints Check:**
+                - Min. for `{meta['exposure']}` exposure: `{EXPOSURE_MIN_CEMENT[meta['exposure']]}` kg/m³
+                - Typical range for `{meta['grade']}`: `{meta['binder_range'][0]}` - `{meta['binder_range'][1]}` kg/m³
+            - **Final Adjusted Binder Content:** **`{meta['cementitious']:.1f}` kg/m³**
+
+            #### 5. SCM & Cement Content
+            - **Optimizer Goal:** Minimize CO₂/cost by replacing cement with SCMs (Fly Ash, GGBS).
+            - **Selected SCM Fraction:** `{meta['scm_total_frac']*100:.0f}%`
+            - **Material Quantities:**
+                - **Cement:** `{meta['cement']:.1f}` kg/m³
+                - **Fly Ash:** `{meta['flyash']:.1f}` kg/m³
+                - **GGBS:** `{meta['ggbs']:.1f}` kg/m³
+
+            #### 6. Aggregate Proportioning (IS 10262, Table 5)
+            - **Basis:** Volume of coarse aggregate for `{meta['nom_max']}` mm aggregate and fine aggregate `{inputs['fine_zone']}`.
+            - **Adjustment:** Corrected for the final w/b ratio of `{meta['w_b']:.3f}`.
+            - **Coarse Aggregate Fraction (by volume):** **`{meta['coarse_agg_fraction']:.3f}`**
+
+            #### 7. Final Quantities (with Moisture Correction)
+            - **Fine Aggregate (SSD):** `{(meta['fine'] / (1 + meta['material_props']['moisture_fa']/100)):.1f}` kg/m³
+            - **Coarse Aggregate (SSD):** `{(meta['coarse'] / (1 + meta['material_props']['moisture_ca']/100)):.1f}` kg/m³
+            - **Moisture Correction:** Adjusted for `{meta['material_props']['moisture_fa']}%` free moisture in fine and `{meta['material_props']['moisture_ca']}%` in coarse aggregate.
+            - **Final Batch Weights:**
+                - **Water:** **`{meta['water_final']:.1f}` kg/m³**
+                - **Fine Aggregate:** **`{meta['fine']:.1f}` kg/m³**
+                - **Coarse Aggregate:** **`{meta['coarse']:.1f}` kg/m³**
+            """)
 
 
         with tab2:
@@ -1460,14 +1548,19 @@ def main():
         st.info("Enter your concrete requirements in the prompt box above, or switch to manual mode to specify parameters.", icon="👆")
         st.markdown("---")
         st.subheader("How It Works")
-        st.markdown("""<br>        1.  **Input Requirements**: Describe your project needs in plain English (e.g., "M25 concrete for moderate exposure") or use the manual sidebar for detailed control.<br>        2.  **IS Code Compliance**: The app generates dozens of candidate mixes, ensuring each one adheres to the durability and strength requirements of Indian Standards **IS 10262** and **IS 456**.<br>        3.  **Sustainability Optimization**: It then calculates the embodied carbon (CO₂e) and cost for every compliant mix.<br>        4.  **Best Mix Selection**: Finally, it presents the mix with the lowest carbon footprint (or cost) alongside a standard OPC baseline for comparison.<br>        """)
+        st.markdown("""
+        1.  **Input Requirements**: Describe your project needs in plain English (e.g., "M25 concrete for moderate exposure") or use the manual sidebar for detailed control.
+        2.  **IS Code Compliance**: The app generates dozens of candidate mixes, ensuring each one adheres to the durability and strength requirements of Indian Standards **IS 10262** and **IS 456**.
+        3.  **Sustainability Optimization**: It then calculates the embodied carbon (CO₂e) and cost for every compliant mix.
+        4.  **Best Mix Selection**: Finally, it presents the mix with the lowest carbon footprint (or cost) alongside a standard OPC baseline for comparison.
+        """)
 
+
+# --- FIX: Call main() at the global scope so Streamlit runs the app ---
+main() 
 
 # --- FIX: Add __name__ == "__main__" guard and test harness ---
 if __name__ == "__main__":
-    
-    # --- FIX: Run main Streamlit app ---
-    main() 
     
     # --- FIX: Optional local test harness ---
     # Check for test flag in env vars or secrets
@@ -1485,7 +1578,7 @@ if __name__ == "__main__":
         # Setup logging to file
         report_path = "/tmp/civilgpt_test_report.txt"
         if os.path.exists(report_path):
-                 os.remove(report_path) # Clear old report
+                    os.remove(report_path) # Clear old report
 
         logging.basicConfig(
             filename=report_path,
