@@ -1,4 +1,5 @@
-# app.py - CivilGPT v2.5.1 (Fixed Computations & IO)
+# app.py - CivilGPT v2.6 (Fixed Computations & IO)
+# v2.6: Improved CSV loading logic. load_data() now auto-detects column variants and searches both root and /data folder.
 # This version fixes core calculation logic for aggregates and robustly loads
 # and applies cost/emissions data, ensuring non-zero calculations.
 # UI and feature flow are preserved from v2.5.
@@ -30,59 +31,83 @@ except Exception:
     client = None
 
 # --- FIX: Column normalization maps ---
-# Define canonical column names and their common variants
+# Define canonical column names and their common variants (keys are normalized)
 EMISSIONS_COL_MAP = {
     "material": "Material",
-    "co2_factor(kg_co2_per_kg)": "CO2_Factor(kg_CO2_per_kg)",
+    "co2_factor_kg_co2_per_kg": "CO2_Factor(kg_CO2_per_kg)",
     "co2_factor": "CO2_Factor(kg_CO2_per_kg)",
     "co2factor": "CO2_Factor(kg_CO2_per_kg)",
     "emission_factor": "CO2_Factor(kg_CO2_per_kg)",
-    "co2factor(kgco2perkg)": "CO2_Factor(kg_CO2_per_kg)"
+    "co2factor_kgco2perkg": "CO2_Factor(kg_CO2_per_kg)",
+    "co2": "CO2_Factor(kg_CO2_per_kg)" # --- FIX: Added variant ---
 }
 COSTS_COL_MAP = {
     "material": "Material",
-    "cost(₹/kg)": "Cost(₹/kg)",
+    "cost_kg": "Cost(₹/kg)",
+    "cost_rs_kg": "Cost(₹/kg)",
     "cost": "Cost(₹/kg)",
     "cost_per_kg": "Cost(₹/kg)",
     "costperkg": "Cost(₹/kg)",
-    "cost(rs/kg)": "Cost(₹/kg)"
+    "price": "Cost(₹/kg)" # --- FIX: Added variant ---
 }
 MATERIALS_COL_MAP = {
     "material": "Material",
     "specificgravity": "SpecificGravity",
+    "specific_gravity": "SpecificGravity",
     "moisturecontent": "MoistureContent",
-    "waterabsorption": "WaterAbsorption"
+    "moisture_content": "MoistureContent",
+    "waterabsorption": "WaterAbsorption",
+    "water_absorption": "WaterAbsorption"
 }
+
+# --- FIX: Helper for robust header normalization (slugify) ---
+def _normalize_header(header):
+    """Converts a messy header to a clean, underscore-based slug."""
+    s = str(header).strip().lower()
+    # Replace common separators with underscore
+    s = re.sub(r'[ \-/\.\(\)]+', '_', s)
+    # Remove any remaining non-alphanumeric characters (like ₹)
+    s = re.sub(r'[^a-z0-9_]+', '', s)
+    # Clean up multiple or trailing underscores
+    s = re.sub(r'_+', '_', s)
+    return s.strip('_')
 
 # --- FIX: Helper for robust column normalization ---
 def _normalize_columns(df, column_map):
     """
-    Normalizes DataFrame columns based on a map of {variant: canonical_name}.
-    Variants are normalized by lowercasing and removing spaces/special chars.
+    Normalizes DataFrame columns based on a map of {normalized_variant: canonical_name}.
     """
+    # --- FIX: Get canonical columns, ensuring unique order ---
+    canonical_cols = list(dict.fromkeys(column_map.values()))
     if df is None or df.empty:
         # Return an empty DF with the canonical columns
-        return pd.DataFrame(columns=list(dict.fromkeys(column_map.values())))
+        return pd.DataFrame(columns=canonical_cols)
 
     df = df.copy()
+    
     # Create a map of {normalized_col_name: original_col_name}
-    norm_cols = {
-        col.strip().lower().replace(" ", "").replace("_", "").replace("(", "").replace(")", "").replace("₹", "").replace("/", ""): col 
-        for col in df.columns
-    }
+    # This allows us to find the *first* column in the CSV that matches a variant
+    norm_cols = {}
+    for col in df.columns:
+        norm_col = _normalize_header(col)
+        if norm_col not in norm_cols: # Keep first occurrence
+             norm_cols[norm_col] = col
     
     rename_dict = {}
     for variant, canonical in column_map.items():
-        # Normalize the variant key
-        norm_variant = variant.strip().lower().replace(" ", "").replace("_", "").replace("(", "").replace(")", "").replace("₹", "").replace("/", "")
-        if norm_variant in norm_cols:
+        # The variant key in the map is *already* normalized
+        if variant in norm_cols:
             # Map the original column name to the canonical name
-            rename_dict[norm_cols[norm_variant]] = canonical
-    
+            original_col_name = norm_cols[variant]
+            
+            # --- FIX: Only map if canonical name hasn't been found yet ---
+            if canonical not in rename_dict.values():
+                rename_dict[original_col_name] = canonical
+
     df = df.rename(columns=rename_dict)
     
     # Keep only the canonical columns that were found in the file
-    found_canonical = [col for col in dict.fromkeys(column_map.values()) if col in df.columns]
+    found_canonical = [col for col in canonical_cols if col in df.columns]
     return df[found_canonical]
 
 
@@ -136,9 +161,9 @@ FINE_AGG_ZONE_LIMITS = {
     "Zone IV":  {"10.0": (95,100),"4.75": (95,100),"2.36": (95,100),"1.18": (90,100),"0.600": (80,100),"0.300": (15,50),"0.150": (0,15)},
 }
 COARSE_LIMITS = {
-    10: {"20.0": (100,100), "10.0": (85,100),   "4.75": (0,20)},
-    20: {"40.0": (95,100),   "20.0": (95,100),   "10.0": (25,55), "4.75": (0,10)},
-    40: {"80.0": (95,100),   "40.0": (95,100),   "20.0": (30,70), "10.0": (0,15)}
+    10: {"20.0": (100,100), "10.0": (85,100),    "4.75": (0,20)},
+    20: {"40.0": (95,100),    "20.0": (95,100),    "10.0": (25,55), "4.75": (0,10)},
+    40: {"80.0": (95,100),    "40.0": (95,100),    "20.0": (30,70), "10.0": (0,15)}
 }
 
 # Parsers (Original, Unchanged)
@@ -184,7 +209,7 @@ def _read_csv_try(path): return pd.read_csv(path)
 def load_data(materials_file=None, emissions_file=None, cost_file=None):
     """
     Loads materials, emissions, and cost data from uploaded files or default paths.
-    Normalizes column names to the app's canonical format.
+    Searches root and /data, normalizes columns, and handles errors.
     """
     def _safe_read(file, default):
         """Reads an uploaded file or returns default."""
@@ -200,43 +225,41 @@ def load_data(materials_file=None, emissions_file=None, cost_file=None):
         return default
 
     def _load_fallback(default_names):
-        """Tries to read a CSV from a list of default paths."""
+        """Tries to read a CSV from a list of default paths (root and data/)."""
         for p in default_names:
             if os.path.exists(p):
                 try:
+                    # --- FIX: Found file, attempt to read ---
                     return pd.read_csv(p)
                 except Exception as e:
                     st.warning(f"Could not read {p}: {e}")
-        return None
+        return None # --- FIX: Return None if all paths fail ---
 
     # 1. Load data from uploaded files or fallbacks
-    materials = _safe_read(materials_file, None)
-    if materials is None:
-        materials = _load_fallback(["materials_library.csv", "data/materials_library.csv"])
-
-    emissions = _safe_read(emissions_file, None)
-    if emissions is None:
-        emissions = _load_fallback(["emission_factors.csv", "data/emission_factors.csv"])
-
-    costs = _safe_read(cost_file, None)
-    if costs is None or (hasattr(costs, 'empty') and costs.empty):
-        costs = _load_fallback(["cost_factors.csv", "data/cost_factors.csv"])
+    # --- FIX: Use fallback logic for all files ---
+    materials = _safe_read(materials_file, _load_fallback(["materials_library.csv", "data/materials_library.csv"]))
+    emissions = _safe_read(emissions_file, _load_fallback(["emission_factors.csv", "data/emission_factors.csv"]))
+    costs = _safe_read(cost_file, _load_fallback(["cost_factors.csv", "data/cost_factors.csv"]))
 
     # 2. Normalize columns and handle missing files
     materials = _normalize_columns(materials, MATERIALS_COL_MAP)
-    if materials.empty:
-        st.warning("Could not load 'materials_library.csv'. Using empty library.", icon="ℹ️")
-        materials = pd.DataFrame(columns=MATERIALS_COL_MAP.values())
+    # --- FIX: Check for 'Material' column as required ---
+    if materials.empty or "Material" not in materials.columns:
+        st.warning("Could not load 'materials_library.csv' or 'Material' column not found. Using empty library.", icon="ℹ️")
+        # --- FIX: Return a clean empty DF with canonical headers ---
+        materials = pd.DataFrame(columns=list(dict.fromkeys(MATERIALS_COL_MAP.values())))
 
     emissions = _normalize_columns(emissions, EMISSIONS_COL_MAP)
-    if emissions.empty or 'CO2_Factor(kg_CO2_per_kg)' not in emissions.columns:
-        st.warning("Could not load 'emission_factors.csv' or required columns not found. CO2 calculations will be zero.", icon="⚠️")
-        emissions = pd.DataFrame(columns=EMISSIONS_COL_MAP.values())
+    # --- FIX: Check for 'Material' AND the value column ---
+    if emissions.empty or "Material" not in emissions.columns or "CO2_Factor(kg_CO2_per_kg)" not in emissions.columns:
+        st.warning("⚠️ Could not load 'emission_factors.csv' or required columns ('Material', 'CO2_Factor') not found. CO2 calculations will be zero.")
+        emissions = pd.DataFrame(columns=list(dict.fromkeys(EMISSIONS_COL_MAP.values())))
         
     costs = _normalize_columns(costs, COSTS_COL_MAP)
-    if costs.empty or 'Cost(₹/kg)' not in costs.columns:
-        st.warning("Could not load 'cost_factors.csv' or required columns not found. Cost calculations will be zero.", icon="⚠️")
-        costs = pd.DataFrame(columns=COSTS_COL_MAP.values())
+    # --- FIX: Check for 'Material' AND the value column ---
+    if costs.empty or "Material" not in costs.columns or "Cost(₹/kg)" not in costs.columns:
+        st.warning("⚠️ Could not load 'cost_factors.csv' or required columns ('Material', 'Cost') not found. Cost calculations will be zero.")
+        costs = pd.DataFrame(columns=list(dict.fromkeys(COSTS_COL_MAP.values())))
 
     return materials, emissions, costs
 
@@ -326,7 +349,7 @@ def evaluate_mix(components_dict, emissions_df, costs_df=None):
         emissions_df_norm = emissions_df_norm.drop_duplicates(subset=["Material_norm"])
         
         df = comp_df.merge(emissions_df_norm[["Material_norm","CO2_Factor(kg_CO2_per_kg)"]],
-                           on="Material_norm", how="left")
+                            on="Material_norm", how="left")
         
         # Warn for missing factors
         missing_emissions = df[df["CO2_Factor(kg_CO2_per_kg)"].isna()]["Material_norm"].tolist()
@@ -377,14 +400,14 @@ def aggregate_correction(delta_moisture_pct: float, agg_mass_ssd: float):
 
 # --- FIX: Rewritten compute_aggregates to include entrapped air ---
 def compute_aggregates(cementitious, water, sp, coarse_agg_fraction,
-                       nom_max_mm, # <-- FIX: Added nom_max_mm
-                       density_fa=2650.0, density_ca=2700.0):
+                        nom_max_mm, # <-- FIX: Added nom_max_mm
+                        density_fa=2650.0, density_ca=2700.0):
     """
     Computes aggregate volumes and masses based on absolute volume method,
     including entrapped air as per IS 10262.
     """
     vol_cem = cementitious / 3150.0 # Density of cement
-    vol_wat = water / 1000.0      # Density of water
+    vol_wat = water / 1000.0       # Density of water
     vol_sp  = sp / 1200.0         # Assumed density of SP
     
     # --- FIX: Get entrapped air based on nominal max aggregate size ---
