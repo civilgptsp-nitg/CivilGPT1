@@ -488,7 +488,9 @@ def evaluate_mix(components_dict, emissions_df, costs_df=None):
     df["Material"] = df["Material"].str.title()
     
     # Ensure all required columns exist, even if empty
-    for col in ["Material","Quantity (kg/m3)","CO2_Factor(kg_CO2_per_kg)","CO2_Emissions (kg/m3)","Cost(₹/kg)","Cost (₹/m3)"]:<br>        if col not in df.columns:
+    # --- SYNTAX FIX: Removed <br> tag ---
+    for col in ["Material","Quantity (kg/m3)","CO2_Factor(kg_CO2_per_kg)","CO2_Emissions (kg/m3)","Cost(₹/kg)","Cost (₹/m3)"]:
+        if col not in df.columns:
             df[col] = 0.0 if "kg" in col or "m3" in col else ""
             
     return df[["Material","Quantity (kg/m3)","CO2_Factor(kg_CO2_per_kg)","CO2_Emissions (kg/m3)","Cost(₹/kg)","Cost (₹/m3)"]]
@@ -567,7 +569,9 @@ def sanity_check_mix(meta, df):
     try:
         cement, water, fine, coarse, sp = float(meta.get("cement", 0)), float(meta.get("water_target", 0)), float(meta.get("fine", 0)), float(meta.get("coarse", 0)), float(meta.get("sp", 0))
         unit_wt = float(df["Quantity (kg/m3)"].sum())
-    except Exception: return ["Insufficient data to run sanity checks."]<br>    
+    # --- SYNTAX FIX: Removed <br> tag ---
+    except Exception: return ["Insufficient data to run sanity checks."]
+    
     # (Original "Low cement content" logic preserved)
     if cement > 500: warnings.append(f"High cement content ({cement:.1f} kg/m³). Increases cost, shrinkage, and CO₂.")
     if water < 140 or water > 220: warnings.append(f"Water content ({water:.1f} kg/m³) is outside the typical range of 140-220 kg/m³.")
@@ -624,8 +628,12 @@ def sieve_check_fa(df: pd.DataFrame, zone: str):
                 ok = False; msgs.append(f"Missing sieve size: {sieve} mm."); continue
             p = float(row["PercentPassing"].iloc[0])
             if not (lo <= p <= hi): ok = False; msgs.append(f"Sieve {sieve} mm: {p:.1f}% passing is outside the required range of {lo}-{hi}%.")
-        if ok: msgs = [f"Fine aggregate conforms to IS 383 for {zone}."]<br>        return ok, msgs
-    except: return False, ["Invalid fine aggregate CSV format. Ensure 'Sieve_mm' and 'PercentPassing' columns exist."]<br>
+        # --- SYNTAX FIX: Removed <br> tag ---
+        if ok: msgs = [f"Fine aggregate conforms to IS 383 for {zone}."]
+        return ok, msgs
+    # --- SYNTAX FIX: Removed <br> tag ---
+    except: return False, ["Invalid fine aggregate CSV format. Ensure 'Sieve_mm' and 'PercentPassing' columns exist."]
+
 def sieve_check_ca(df: pd.DataFrame, nominal_mm: int):
     try:
         limits, ok, msgs = COARSE_LIMITS[int(nominal_mm)], True, []
@@ -635,8 +643,12 @@ def sieve_check_ca(df: pd.DataFrame, nominal_mm: int):
                 ok = False; msgs.append(f"Missing sieve size: {sieve} mm."); continue
             p = float(row["PercentPassing"].iloc[0])
             if not (lo <= p <= hi): ok = False; msgs.append(f"Sieve {sieve} mm: {p:.1f}% passing is outside the required range of {lo}-{hi}%.")
-        if ok: msgs = [f"Coarse aggregate conforms to IS 383 for {nominal_mm} mm graded aggregate."]<br>        return ok, msgs
-    except: return False, ["Invalid coarse aggregate CSV format. Ensure 'Sieve_mm' and 'PercentPassing' columns exist."]<br>
+        # --- SYNTAX FIX: Removed <br> tag ---
+        if ok: msgs = [f"Coarse aggregate conforms to IS 383 for {nominal_mm} mm graded aggregate."]
+        return ok, msgs
+    # --- SYNTAX FIX: Removed <br> tag ---
+    except: return False, ["Invalid coarse aggregate CSV format. Ensure 'Sieve_mm' and 'PercentPassing' columns exist."]
+
 
 def generate_mix(grade, exposure, nom_max, target_slump, agg_shape, fine_zone, emissions, costs, cement_choice, material_props, use_sp=True, sp_reduction=0.18, optimize_cost=False, wb_min=0.35, wb_steps=6, max_flyash_frac=0.3, max_ggbs_frac=0.5, scm_step=0.1, fine_fraction_override=None):
     w_b_limit, min_cem_exp = float(EXPOSURE_WB_LIMITS[exposure]), float(EXPOSURE_MIN_CEMENT[exposure])
@@ -1434,8 +1446,10 @@ def main():
                 except Exception as e:
                     st.error(f"Failed to read or process the lab data CSV file: {e}", icon="💥")
             else:
+                # --- SYNTAX FIX: Removed <br> tags ---
                 st.info(
-                    "Upload a lab data CSV in the sidebar to automatically compare CivilGPT's "<br>                    "target strength calculations against your real-world results.",
+                    "Upload a lab data CSV in the sidebar to automatically compare CivilGPT's "
+                    "target strength calculations against your real-world results.",
                     icon="ℹ️"
                 )
                 
