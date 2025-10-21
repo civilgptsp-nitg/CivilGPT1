@@ -1,8 +1,5 @@
-# app.py - CivilGPT v2.6 (Fixed Computations & IO)
-# v2.6: Improved CSV loading logic. load_data() now auto-detects column variants and searches both root and /data folder.
-# This version fixes core calculation logic for aggregates and robustly loads
-# and applies cost/emissions data, ensuring non-zero calculations.
-# UI and feature flow are preserved from v2.5.
+# app.py - CivilGPT v2.7 (Cost Computation Fix)
+# v2.7: Fixed cost computation pipeline (robust header normalization, merge logic, and propagation)
 
 import streamlit as st
 import pandas as pd
@@ -41,14 +38,17 @@ EMISSIONS_COL_MAP = {
     "co2factor_kgco2perkg": "CO2_Factor(kg_CO2_per_kg)",
     "co2": "CO2_Factor(kg_CO2_per_kg)" # --- FIX: Added variant ---
 }
+# --- v2.7 FIX: Added 'kg' (from '₹/kg') and 'rs_kg' (from 'rs/kg') variants ---
 COSTS_COL_MAP = {
     "material": "Material",
-    "cost_kg": "Cost(₹/kg)",
-    "cost_rs_kg": "Cost(₹/kg)",
-    "cost": "Cost(₹/kg)",
-    "cost_per_kg": "Cost(₹/kg)",
-    "costperkg": "Cost(₹/kg)",
-    "price": "Cost(₹/kg)" # --- FIX: Added variant ---
+    "cost_kg": "Cost(₹/kg)",        # From "Cost (₹/kg)"
+    "cost_rs_kg": "Cost(₹/kg)",     # From "Cost (rs/kg)"
+    "cost": "Cost(₹/kg)",           # From "Cost"
+    "cost_per_kg": "Cost(₹/kg)",    # From "cost_per_kg"
+    "costperkg": "Cost(₹/kg)",      # From "costperkg"
+    "price": "Cost(₹/kg)",          # From "Price"
+    "kg": "Cost(₹/kg)",             # FIX: From "₹/kg"
+    "rs_kg": "Cost(₹/kg)",        # FIX: From "rs/kg"
 }
 MATERIALS_COL_MAP = {
     "material": "Material",
@@ -91,7 +91,7 @@ def _normalize_columns(df, column_map):
     for col in df.columns:
         norm_col = _normalize_header(col)
         if norm_col not in norm_cols: # Keep first occurrence
-             norm_cols[norm_col] = col
+            norm_cols[norm_col] = col
     
     rename_dict = {}
     for variant, canonical in column_map.items():
@@ -161,9 +161,9 @@ FINE_AGG_ZONE_LIMITS = {
     "Zone IV":  {"10.0": (95,100),"4.75": (95,100),"2.36": (95,100),"1.18": (90,100),"0.600": (80,100),"0.300": (15,50),"0.150": (0,15)},
 }
 COARSE_LIMITS = {
-    10: {"20.0": (100,100), "10.0": (85,100),    "4.75": (0,20)},
-    20: {"40.0": (95,100),    "20.0": (95,100),    "10.0": (25,55), "4.75": (0,10)},
-    40: {"80.0": (95,100),    "40.0": (95,100),    "20.0": (30,70), "10.0": (0,15)}
+    10: {"20.0": (100,100), "10.0": (85,100),     "4.75": (0,20)},
+    20: {"40.0": (95,100),   "20.0": (95,100),    "10.0": (25,55), "4.75": (0,10)},
+    40: {"80.0": (95,100),   "40.0": (95,100),    "20.0": (30,70), "10.0": (0,15)}
 }
 
 # Parsers (Original, Unchanged)
@@ -334,7 +334,8 @@ def run_lab_calibration(lab_df):
 # PART 2: CORE MIX LOGIC (UPDATED)
 # ==============================================================================
 
-# --- FIX: Rewritten evaluate_mix for robust factor merging and warnings ---
+# --- v2.7 FIX: This function is now correct, as costs_df will have the
+# --- 'Cost(₹/kg)' column if the file was loaded successfully.
 def evaluate_mix(components_dict, emissions_df, costs_df=None):
     """Calculates CO2 and Cost for a given mix, with robust merging and warnings."""
     
@@ -349,12 +350,18 @@ def evaluate_mix(components_dict, emissions_df, costs_df=None):
         emissions_df_norm = emissions_df_norm.drop_duplicates(subset=["Material_norm"])
         
         df = comp_df.merge(emissions_df_norm[["Material_norm","CO2_Factor(kg_CO2_per_kg)"]],
-                            on="Material_norm", how="left")
+                             on="Material_norm", how="left")
         
         # Warn for missing factors
         missing_emissions = df[df["CO2_Factor(kg_CO2_per_kg)"].isna()]["Material_norm"].tolist()
         if missing_emissions:
-            st.warning(f"No emission factors found for: {', '.join(list(set(missing_emissions)))}. CO2 will be 0 for these materials.", icon="⚠️")
+            # --- v2.7: Use st.session_state to warn only once per material ---
+            if 'warned_emissions' not in st.session_state:
+                st.session_state.warned_emissions = set()
+            new_missing = set(missing_emissions) - st.session_state.warned_emissions
+            if new_missing:
+                st.warning(f"No emission factors found for: {', '.join(list(new_missing))}. CO2 will be 0 for these materials.", icon="⚠️")
+                st.session_state.warned_emissions.update(new_missing)
         
         df["CO2_Factor(kg_CO2_per_kg)"] = df["CO2_Factor(kg_CO2_per_kg)"].fillna(0.0)
     else:
@@ -375,8 +382,14 @@ def evaluate_mix(components_dict, emissions_df, costs_df=None):
         # Warn for missing costs
         missing_costs = df[df["Cost(₹/kg)"].isna()]["Material_norm"].tolist()
         if missing_costs:
-            st.warning(f"No cost factors found for: {', '.join(list(set(missing_costs)))}. Cost will be 0 for these materials.", icon="⚠️")
-            
+            # --- v2.7: Use st.session_state to warn only once per material ---
+            if 'warned_costs' not in st.session_state:
+                st.session_state.warned_costs = set()
+            new_missing = set(missing_costs) - st.session_state.warned_costs
+            if new_missing:
+                st.warning(f"No cost factors found for: {', '.join(list(new_missing))}. Cost will be 0 for these materials.", icon="⚠️")
+                st.session_state.warned_costs.update(new_missing)
+                
         df["Cost(₹/kg)"] = df["Cost(₹/kg)"].fillna(0.0)
     else:
         df["Cost(₹/kg)"] = 0.0
@@ -400,15 +413,15 @@ def aggregate_correction(delta_moisture_pct: float, agg_mass_ssd: float):
 
 # --- FIX: Rewritten compute_aggregates to include entrapped air ---
 def compute_aggregates(cementitious, water, sp, coarse_agg_fraction,
-                        nom_max_mm, # <-- FIX: Added nom_max_mm
-                        density_fa=2650.0, density_ca=2700.0):
+                       nom_max_mm, # <-- FIX: Added nom_max_mm
+                       density_fa=2650.0, density_ca=2700.0):
     """
     Computes aggregate volumes and masses based on absolute volume method,
     including entrapped air as per IS 10262.
     """
     vol_cem = cementitious / 3150.0 # Density of cement
     vol_wat = water / 1000.0       # Density of water
-    vol_sp  = sp / 1200.0         # Assumed density of SP
+    vol_sp  = sp / 1200.0          # Assumed density of SP
     
     # --- FIX: Get entrapped air based on nominal max aggregate size ---
     vol_air = ENTRAPPED_AIR_VOL.get(int(nom_max_mm), 0.01) # Default to 1% (for 20mm)
@@ -551,6 +564,12 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape, fine_zone, e
     flyash_options = np.arange(0.0, max_flyash_frac + 1e-9, scm_step)
     ggbs_options = np.arange(0.0, max_ggbs_frac + 1e-9, scm_step)
     min_b_grade, max_b_grade = reasonable_binder_range(grade)
+
+    # --- v2.7: Clear warnings at the start of a new generation ---
+    if 'warned_emissions' in st.session_state:
+        st.session_state.warned_emissions.clear()
+    if 'warned_costs' in st.session_state:
+        st.session_state.warned_costs.clear()
 
     for wb in wb_values:
         for flyash_frac in flyash_options:
