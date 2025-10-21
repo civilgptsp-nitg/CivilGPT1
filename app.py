@@ -151,21 +151,41 @@ def load_data(materials_file=None, emissions_file=None, cost_file=None):
     emissions = _safe_read(emissions_file, None)
     costs = _safe_read(cost_file, None)
 
+    # --- Materials Loading ---
     if materials is None:
-        try:
-            materials = _read_csv_try("materials_library.csv")
-        except:
-            materials = pd.DataFrame(columns=["Material"])
+        found = False
+        # Use the loop pattern for consistency, checking root and data/
+        for p in ["materials_library.csv", "data/materials_library.csv"]:
+            if os.path.exists(p):
+                try:
+                    materials = pd.read_csv(p)
+                    found = True
+                    break
+                except Exception as e:
+                    st.warning(f"Could not read {p}: {e}")
+        if not found:
+            materials = pd.DataFrame(columns=["Material"]) # Original fallback
 
+    # --- Emissions Loading (FIX 1) ---
     if emissions is None:
-        try:
-            emissions = _read_csv_try("emission_factors.csv")
-        except:
+        found = False
+        # Apply the requested fix: check both paths
+        for p in ["emission_factors.csv", "data/emission_factors.csv"]:
+            if os.path.exists(p):
+                try:
+                    emissions = pd.read_csv(p)
+                    found = True
+                    break
+                except Exception as e:
+                    st.warning(f"Could not read {p}: {e}")
+        if not found:
+            # FIX 4: Original fallback is correct
             emissions = pd.DataFrame(columns=["Material", "CO2_Factor(kg_CO2_per_kg)"])
 
-    # FIXED COST LOADING
+    # --- Cost Loading (FIX 2) ---
     if costs is None or costs.empty:
         found = False
+        # This logic was already correct in user's code
         for p in ["cost_factors.csv", "data/cost_factors.csv"]:
             if os.path.exists(p):
                 try:
@@ -175,7 +195,29 @@ def load_data(materials_file=None, emissions_file=None, cost_file=None):
                 except Exception as e:
                     st.warning(f"Could not read {p}: {e}")
         if not found:
+            # FIX 4: Original fallback is correct
             costs = pd.DataFrame(columns=["Material", "Cost(₹/kg)"])
+
+    # --- Normalization (FIX 3) ---
+    # Apply normalization to all dataframes.
+    # This works on full or empty dataframes as long as 'Material' column exists.
+    if "Material" in materials.columns:
+        materials["Material_norm"] = materials["Material"].astype(str).str.strip().str.lower()
+    else:
+        # If 'Material' column is missing entirely, add an empty 'Material_norm'
+        materials["Material_norm"] = pd.Series(dtype='object')
+        
+    if "Material" in emissions.columns:
+        emissions["Material_norm"] = emissions["Material"].astype(str).str.strip().str.lower()
+    else:
+        # If 'Material' column is missing, add an empty 'Material_norm'
+        emissions["Material_norm"] = pd.Series(dtype='object')
+
+    if "Material" in costs.columns:
+        costs["Material_norm"] = costs["Material"].astype(str).str.strip().str.lower()
+    else:
+        # If 'Material' column is missing, add an empty 'Material_norm'
+        costs["Material_norm"] = pd.Series(dtype='object')
 
     return materials, emissions, costs
 
@@ -302,7 +344,10 @@ def evaluate_mix(components_dict, emissions_df, costs_df=None):
     comp_items = [(m.strip().lower(), q) for m, q in components_dict.items()]
     comp_df = pd.DataFrame(comp_items, columns=["Material_norm", "Quantity (kg/m3)"])
     emissions_df = emissions_df.copy()
-    emissions_df["Material_norm"] = emissions_df["Material"].str.strip().str.lower()
+    
+    # NOTE: 'Material_norm' is now pre-populated by load_data()
+    # emissions_df["Material_norm"] = emissions_df["Material"].str.strip().str.lower()
+    
     df = comp_df.merge(emissions_df[["Material_norm","CO2_Factor(kg_CO2_per_kg)"]],
                                        on="Material_norm", how="left")
     if "CO2_Factor(kg_CO2_per_kg)" not in df.columns:
@@ -314,8 +359,10 @@ def evaluate_mix(components_dict, emissions_df, costs_df=None):
     # Check if cost data is available, valid, and not empty
     if costs_df is not None and "Cost(₹/kg)" in costs_df.columns and not costs_df.empty:
         costs_df = costs_df.copy()
-        # Normalize material names in the cost dataframe for robust merging
-        costs_df["Material_norm"] = costs_df["Material"].str.strip().str.lower()
+        
+        # NOTE: 'Material_norm' is now pre-populated by load_data()
+        # costs_df["Material_norm"] = costs_df["Material"].str.strip().str.lower()
+        
         # Perform a left merge to add cost data to the mix components
         df = df.merge(costs_df[["Material_norm", "Cost(₹/kg)"]], on="Material_norm", how="left")
         # If a material from the mix is not in the cost file, its cost will be NaN.
