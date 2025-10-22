@@ -1,0 +1,22 @@
+{
+  "General": {
+    "description": "Balanced mix for general concrete applications.",
+    "weights": { "co2": 0.33, "cost": 0.33, "purpose": 0.34 },
+    "target_ranges": { "scm_min": 0.1, "scm_max": 0.5 }
+  },
+  "Slab": {
+    "description": "Flat structural element, focus on workability and shrinkage.",
+    "weights": { "co2": 0.3, "cost": 0.2, "purpose": 0.5 },
+    "target_ranges": { "slump_min": 100, "slump_max": 150 }
+  },
+  "Beam": {
+    "description": "Linear structural member; prioritize strength and stiffness.",
+    "weights": { "co2": 0.25, "cost": 0.25, "purpose": 0.5 },
+    "target_ranges": { "fck_min": 25, "fck_max": 40 }
+  },
+  "Column": {
+    "description": "Compression member; prioritize compressive strength and low creep.",
+    "weights": { "co2": 0.2, "cost": 0.3, "purpose": 0.5 },
+    "target_ranges": { "fck_min": 30, "fck_max": 50 }
+  }
+}
