@@ -1,4 +1,4 @@
-# app.py - CivilGPT v4.0 (Smart LLM Chat Mode Integration)
+# app.py - CivilGPT v4.0 (Compressed)
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -101,13 +101,11 @@ class CONSTANTS:
 client = None
 try:
     from groq import Groq
-    # Check environment variables (local) and Streamlit secrets (cloud)
     GROQ_API_KEY = os.getenv("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY", None)
     
     if GROQ_API_KEY:
         client = Groq(api_key=GROQ_API_KEY)
         st.session_state["llm_enabled"] = True
-        # Store message to be displayed inside main()
         st.session_state["llm_init_message"] = ("success", "✅ LLM features enabled via Groq API.")
     else:
         client = None
@@ -121,7 +119,6 @@ except Exception as e:
     client = None
     st.session_state["llm_enabled"] = False
     st.session_state["llm_init_message"] = ("warning", f"⚠️ LLM initialization failed: {e}. Falling back to regex parser.")
-# --- End of LLM Initialization ---
 
 @st.cache_data
 def load_default_excel(file_name):
@@ -172,8 +169,7 @@ def _normalize_material_value(s: str) -> str:
     cand = get_close_matches(key2, list(synonyms.keys()), n=1, cutoff=0.78)
     if cand: return synonyms[cand[0]]
     
-    # Handle cement types not explicitly in synonyms
-    if s.startswith("opc"): return s
+    if s.startswith("opc"): return s # Handle cement types not explicitly in synonyms
     
     return s
 
@@ -252,15 +248,12 @@ def compute_purpose_penalty_vectorized(df: pd.DataFrame, purpose_profile: dict) 
     
     penalty = pd.Series(0.0, index=df.index)
     
-    # W/B penalty
     wb_limit = purpose_profile.get('wb_limit', 1.0)
     penalty += (df['w_b'] - wb_limit).clip(lower=0) * 1000
     
-    # SCM penalty
     scm_limit = purpose_profile.get('scm_limit', 0.5)
     penalty += (df['scm_total_frac'] - scm_limit).clip(lower=0) * 100
     
-    # Min binder penalty
     min_binder = purpose_profile.get('min_binder', 0.0)
     penalty += (min_binder - df['binder']).clip(lower=0) * 0.1
     
@@ -312,6 +305,33 @@ def load_data(materials_file=None, emissions_file=None, cost_file=None):
         costs = pd.DataFrame(columns=list(dict.fromkeys(CONSTANTS.COSTS_COL_MAP.values())))
 
     return materials, emissions, costs
+
+def _merge_and_warn(main_df: pd.DataFrame, factor_df: pd.DataFrame, factor_col: str, warning_session_key: str, warning_prefix: str) -> pd.DataFrame:
+    """Helper to merge factor dataframes and issue warnings for missing values."""
+    if factor_df is not None and not factor_df.empty and factor_col in factor_df.columns:
+        factor_df_norm = factor_df.copy()
+        factor_df_norm['Material'] = factor_df_norm['Material'].astype(str)
+        factor_df_norm["Material_norm"] = factor_df_norm["Material"].apply(_normalize_material_value)
+        factor_df_norm = factor_df_norm.drop_duplicates(subset=["Material_norm"])
+        
+        merged_df = main_df.merge(factor_df_norm[["Material_norm", factor_col]], on="Material_norm", how="left")
+        
+        missing_rows = merged_df[merged_df[factor_col].isna()]
+        missing_items = [m for m in missing_rows["Material"].tolist() if m and str(m).strip()]
+        
+        if missing_items:
+            if warning_session_key not in st.session_state: 
+                st.session_state[warning_session_key] = set()
+            new_missing = set(missing_items) - st.session_state[warning_session_key]
+            if new_missing:
+                st.warning(f"{warning_prefix}: {', '.join(list(new_missing))}. Value will be 0 for these.", icon="⚠️")
+                st.session_state[warning_session_key].update(new_missing)
+        
+        merged_df[factor_col] = merged_df[factor_col].fillna(0.0)
+        return merged_df
+    else:
+        main_df[factor_col] = 0.0
+        return main_df
 
 def pareto_front(df, x_col="cost", y_col="co2"):
     if df.empty: return pd.DataFrame(columns=df.columns)
@@ -391,7 +411,6 @@ def simple_parse(text: str) -> dict:
     grade_match = re.search(r"\bM\s*(10|15|20|25|30|35|40|45|50)\b", text, re.IGNORECASE)
     if grade_match: result["grade"] = "M" + grade_match.group(1)
     
-    # Prioritize "Marine" as it's more specific
     if re.search("Marine", text, re.IGNORECASE):
         result["exposure"] = "Marine"
     else:
@@ -399,7 +418,7 @@ def simple_parse(text: str) -> dict:
             if exp != "Marine" and re.search(exp, text, re.IGNORECASE):
                 result["exposure"] = exp
                 break
-                
+            
     slump_match = re.search(r"(\d{2,3})\s*mm\s*(?:slump)?", text, re.IGNORECASE)
     if not slump_match:
         slump_match = re.search(r"slump\s*(?:of\s*)?(\d{2,3})\s*mm", text, re.IGNORECASE)
@@ -430,9 +449,7 @@ def parse_user_prompt_llm(prompt_text: str) -> dict:
     Sends user prompt to LLM and returns structured parameter JSON.
     Must gracefully handle parsing errors or malformed responses.
     """
-    # Check the session state flag set during initialization
     if not st.session_state.get("llm_enabled", False) or client is None:
-        # No st.warning here, as the info message was already shown on load
         return simple_parse(prompt_text)
 
     system_prompt = f"""
@@ -456,7 +473,7 @@ def parse_user_prompt_llm(prompt_text: str) -> dict:
     
     try:
         resp = client.chat.completions.create(
-            model="mixtral-8x7b-32768", # Using model from original code
+            model="mixtral-8x7b-32768",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt_text}
@@ -467,7 +484,6 @@ def parse_user_prompt_llm(prompt_text: str) -> dict:
         content = resp.choices[0].message.content
         parsed_json = json.loads(content)
         
-        # Clean and rename keys to match internal variable names
         cleaned_data = {}
         if parsed_json.get("grade") in CONSTANTS.GRADE_STRENGTH:
             cleaned_data["grade"] = parsed_json["grade"]
@@ -500,49 +516,25 @@ def evaluate_mix(components_dict, emissions_df, costs_df=None):
     comp_df = pd.DataFrame(comp_items, columns=["Material", "Quantity (kg/m3)"])
     comp_df["Material_norm"] = comp_df["Material"].apply(_normalize_material_value)
     
-    if emissions_df is not None and not emissions_df.empty and "CO2_Factor(kg_CO2_per_kg)" in emissions_df.columns:
-        emissions_df_norm = emissions_df.copy()
-        emissions_df_norm['Material'] = emissions_df_norm['Material'].astype(str)
-        emissions_df_norm["Material_norm"] = emissions_df_norm["Material"].apply(_normalize_material_value)
-        emissions_df_norm = emissions_df_norm.drop_duplicates(subset=["Material_norm"])
-        df = comp_df.merge(emissions_df_norm[["Material_norm","CO2_Factor(kg_CO2_per_kg)"]], on="Material_norm", how="left")
-        missing_rows = df[df["CO2_Factor(kg_CO2_per_kg)"].isna()]
-        missing_emissions = [m for m in missing_rows["Material"].tolist() if m and str(m).strip()]
-        if missing_emissions:
-            if 'warned_emissions' not in st.session_state: st.session_state.warned_emissions = set()
-            new_missing = set(missing_emissions) - st.session_state.warned_emissions
-            if new_missing:
-                st.warning(f"No emission factors found for: {', '.join(list(new_missing))}. CO2 will be 0 for these.", icon="⚠️")
-                st.session_state.warned_emissions.update(new_missing)
-        df["CO2_Factor(kg_CO2_per_kg)"] = df["CO2_Factor(kg_CO2_per_kg)"].fillna(0.0)
-    else:
-        df = comp_df.copy()
-        df["CO2_Factor(kg_CO2_per_kg)"] = 0.0
+    # Refactored: Use helper to merge emissions
+    df = _merge_and_warn(
+        comp_df, emissions_df, "CO2_Factor(kg_CO2_per_kg)",
+        "warned_emissions", "No emission factors found for"
+    )
     df["CO2_Emissions (kg/m3)"] = df["Quantity (kg/m3)"] * df["CO2_Factor(kg_CO2_per_kg)"]
 
-    if costs_df is not None and not costs_df.empty and "Cost(₹/kg)" in costs_df.columns:
-        costs_df_norm = costs_df.copy()
-        costs_df_norm['Material'] = costs_df_norm['Material'].astype(str)
-        costs_df_norm["Material_norm"] = costs_df_norm["Material"].apply(_normalize_material_value)
-        costs_df_norm = costs_df_norm.drop_duplicates(subset=["Material_norm"])
-        df = df.merge(costs_df_norm[["Material_norm", "Cost(₹/kg)"]], on="Material_norm", how="left")
-        missing_rows_cost = df[df["Cost(₹/kg)"].isna()]
-        missing_costs = [m for m in missing_rows_cost["Material"].tolist() if m and str(m).strip()]
-        if missing_costs:
-            if 'warned_costs' not in st.session_state: st.session_state.warned_costs = set()
-            new_missing = set(missing_costs) - st.session_state.warned_costs
-            if new_missing:
-                st.warning(f"No cost factors found for: {', '.join(list(new_missing))}. Cost will be 0 for these.", icon="⚠️")
-                st.session_state.warned_costs.update(new_missing)
-        df["Cost(₹/kg)"] = df["Cost(₹/kg)"].fillna(0.0)
-    else:
-        df["Cost(₹/kg)"] = 0.0
+    # Refactored: Use helper to merge costs
+    df = _merge_and_warn(
+        df, costs_df, "Cost(₹/kg)",
+        "warned_costs", "No cost factors found for"
+    )
     df["Cost (₹/m3)"] = df["Quantity (kg/m3)"] * df["Cost(₹/kg)"]
     
     df["Material"] = df["Material"].str.title()
     for col in ["Material","Quantity (kg/m3)","CO2_Factor(kg_CO2_per_kg)","CO2_Emissions (kg/m3)","Cost(₹/kg)","Cost (₹/m3)"]:
         if col not in df.columns:
             df[col] = 0.0 if "kg" in col or "m3" in col else ""
+            
     return df[["Material","Quantity (kg/m3)","CO2_Factor(kg_CO2_per_kg)","CO2_Emissions (kg/m3)","Cost(₹/kg)","Cost (₹/m3)"]]
 
 def aggregate_correction(delta_moisture_pct: float, agg_mass_ssd: float):
@@ -573,12 +565,12 @@ def compute_aggregates(cementitious, water, sp, coarse_agg_fraction, nom_max_mm,
 def compute_aggregates_vectorized(binder_series, water_scalar, sp_series, coarse_agg_frac_series, nom_max_mm, density_fa, density_ca):
     """Vectorized version of compute_aggregates."""
     vol_cem = binder_series / 3150.0
-    vol_wat = water_scalar / 1000.0  # Scalar
+    vol_wat = water_scalar / 1000.0
     vol_sp = sp_series / 1200.0
-    vol_air = CONSTANTS.ENTRAPPED_AIR_VOL.get(int(nom_max_mm), 0.01)  # Scalar
+    vol_air = CONSTANTS.ENTRAPPED_AIR_VOL.get(int(nom_max_mm), 0.01)
     
     vol_paste_and_air = vol_cem + vol_wat + vol_sp + vol_air
-    vol_agg = (1.0 - vol_paste_and_air).clip(lower=0.60)  # Handle negative volumes
+    vol_agg = (1.0 - vol_paste_and_air).clip(lower=0.60)
     
     vol_coarse = vol_agg * coarse_agg_frac_series
     vol_fine = vol_agg * (1.0 - coarse_agg_frac_series)
@@ -670,10 +662,8 @@ def get_compliance_reasons_vectorized(df: pd.DataFrame, exposure: str) -> pd.Ser
     limit_wb = CONSTANTS.EXPOSURE_WB_LIMITS[exposure]
     limit_cem = CONSTANTS.EXPOSURE_MIN_CEMENT[exposure]
     
-    # Start with empty strings
     reasons = pd.Series("", index=df.index, dtype=str)
     
-    # Append failure reasons vector-wise
     reasons += np.where(
         df['w_b'] > limit_wb,
         "Failed W/B ratio (" + df['w_b'].round(3).astype(str) + " > " + str(limit_wb) + "); ",
@@ -695,10 +685,7 @@ def get_compliance_reasons_vectorized(df: pd.DataFrame, exposure: str) -> pd.Ser
         ""
     )
     
-    # Clean up trailing semicolons/spaces
     reasons = reasons.str.strip().str.rstrip(';')
-    
-    # Set success message for rows with no failure reasons
     reasons = np.where(reasons == "", "All IS-code checks passed.", reasons)
     
     return reasons
@@ -738,11 +725,9 @@ def _get_material_factors(materials_list, emissions_df, costs_df):
     merging DataFrames inside a loop.
     Returns two dictionaries: co2_factors_dict, cost_factors_dict
     """
-    # Normalize input materials
     norm_map = {m: _normalize_material_value(m) for m in materials_list}
     norm_materials = list(set(norm_map.values()))
 
-    # Process Emissions
     co2_factors_dict = {}
     if emissions_df is not None and not emissions_df.empty and "CO2_Factor(kg_CO2_per_kg)" in emissions_df.columns:
         emissions_df_norm = emissions_df.copy()
@@ -751,7 +736,6 @@ def _get_material_factors(materials_list, emissions_df, costs_df):
         emissions_df_norm = emissions_df_norm.drop_duplicates(subset=["Material_norm"]).set_index("Material_norm")
         co2_factors_dict = emissions_df_norm["CO2_Factor(kg_CO2_per_kg)"].to_dict()
 
-    # Process Costs
     cost_factors_dict = {}
     if costs_df is not None and not costs_df.empty and "Cost(₹/kg)" in costs_df.columns:
         costs_df_norm = costs_df.copy()
@@ -760,7 +744,6 @@ def _get_material_factors(materials_list, emissions_df, costs_df):
         costs_df_norm = costs_df_norm.drop_duplicates(subset=["Material_norm"]).set_index("Material_norm")
         cost_factors_dict = costs_df_norm["Cost(₹/kg)"].to_dict()
 
-    # Create final lookup dictionaries, defaulting to 0.0
     final_co2 = {norm: co2_factors_dict.get(norm, 0.0) for norm in norm_materials}
     final_cost = {norm: cost_factors_dict.get(norm, 0.0) for norm in norm_materials}
     
@@ -784,10 +767,9 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     min_b_grade, max_b_grade = reasonable_binder_range(grade)
     density_fa, density_ca = material_props['sg_fa'] * 1000, material_props['sg_ca'] * 1000
     
-    # Clear session state warnings for this run
     if 'warned_emissions' in st.session_state: st.session_state.warned_emissions.clear()
     if 'warned_costs' in st.session_state: st.session_state.warned_costs.clear()
-          
+           
     if purpose_profile is None: purpose_profile = CONSTANTS.PURPOSE_PROFILES['General']
     if purpose_weights is None: purpose_weights = CONSTANTS.PURPOSE_PROFILES['General']['weights']
 
@@ -812,7 +794,6 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     grid_params = list(product(wb_values, flyash_options, ggbs_options))
     grid_df = pd.DataFrame(grid_params, columns=['wb_input', 'flyash_frac', 'ggbs_frac'])
     
-    # SCM constraint
     grid_df = grid_df[grid_df['flyash_frac'] + grid_df['ggbs_frac'] <= 0.50].copy()
     if grid_df.empty:
         return None, None, [] # No feasible SCM combinations
@@ -820,7 +801,6 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     # --- 4. Vectorized Mix Calculations ---
     if st_progress: st_progress.progress(0.2, text="Calculating binder properties...")
     
-    # Binder calculations
     grid_df['binder_for_strength'] = target_water / grid_df['wb_input']
     
     # FIX: Broadcast scalars to array shape to prevent ValueError
@@ -831,7 +811,6 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     grid_df['binder'] = np.minimum(grid_df['binder'], max_b_grade)
     grid_df['w_b'] = target_water / grid_df['binder']
     
-    # Component mass calculations
     grid_df['scm_total_frac'] = grid_df['flyash_frac'] + grid_df['ggbs_frac']
     grid_df['cement'] = grid_df['binder'] * (1 - grid_df['scm_total_frac'])
     grid_df['flyash'] = grid_df['binder'] * grid_df['flyash_frac']
@@ -840,19 +819,16 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     
     if st_progress: st_progress.progress(0.3, text="Calculating aggregate proportions...")
     
-    # Aggregate proportions
     if fine_fraction_override is not None:
         grid_df['coarse_agg_fraction'] = 1.0 - fine_fraction_override
     else:
         grid_df['coarse_agg_fraction'] = get_coarse_agg_fraction_vectorized(nom_max, fine_zone, grid_df['w_b'])
     
-    # Aggregate mass (SSD)
     grid_df['fine_ssd'], grid_df['coarse_ssd'] = compute_aggregates_vectorized(
         grid_df['binder'], target_water, grid_df['sp'], grid_df['coarse_agg_fraction'],
         nom_max, density_fa, density_ca
     )
     
-    # Moisture corrections
     water_delta_fa_series, grid_df['fine_wet'] = aggregate_correction_vectorized(
         material_props['moisture_fa'], grid_df['fine_ssd']
     )
@@ -860,7 +836,6 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
         material_props['moisture_ca'], grid_df['coarse_ssd']
     )
     
-    # Final water
     grid_df['water_final'] = (target_water - (water_delta_fa_series + water_delta_ca_series)).clip(lower=5.0)
 
     # --- 5. Vectorized Cost & CO2 Calculations ---
@@ -889,14 +864,12 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     # --- 6. Vectorized Feasibility & Purpose Scoring ---
     if st_progress: st_progress.progress(0.7, text="Checking compliance and purpose-fit...")
     
-    # Total mass for unit weight check
     grid_df['total_mass'] = (
         grid_df['cement'] + grid_df['flyash'] + grid_df['ggbs'] + 
         grid_df['water_final'] + grid_df['sp'] + 
         grid_df['fine_wet'] + grid_df['coarse_wet']
     )
     
-    # Feasibility checks
     grid_df['check_wb'] = grid_df['w_b'] <= w_b_limit
     grid_df['check_min_cem'] = grid_df['binder'] >= min_cem_exp
     grid_df['check_scm'] = grid_df['scm_total_frac'] <= 0.50
@@ -907,10 +880,7 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
         grid_df['check_scm'] & grid_df['check_unit_wt']
     )
     
-    # Feasibility reasons (for trace)
     grid_df['reasons'] = get_compliance_reasons_vectorized(grid_df, exposure)
-    
-    # Purpose scoring
     grid_df['purpose_penalty'] = compute_purpose_penalty_vectorized(grid_df, purpose_profile)
     grid_df['purpose'] = purpose
 
@@ -949,8 +919,6 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     # --- 9. Re-hydrate Final Mix & Trace ---
     if st_progress: st_progress.progress(0.9, text="Generating final mix report...")
     
-    # Re-create the final mix dict to pass to evaluate_mix
-    # This ensures warnings/formatting are identical to baseline
     best_mix_dict = {
         cement_choice: best_meta_series['cement'],
         "Fly Ash": best_meta_series['flyash'],
@@ -961,10 +929,8 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
         "Coarse Aggregate": best_meta_series['coarse_wet']
     }
     
-    # Call evaluate_mix ONCE for the final mix to get formatted df and warnings
     best_df = evaluate_mix(best_mix_dict, emissions, costs)
     
-    # Prepare metadata dictionary
     best_meta = best_meta_series.to_dict()
     best_meta.update({
         "cementitious": best_meta_series['binder'],
@@ -977,10 +943,8 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
         "purpose_metrics": evaluate_purpose_specific_metrics(best_meta, purpose)
     })
     
-    # Prepare trace DataFrame
     trace_df = grid_df.rename(columns={"w_b": "wb", "cost_total": "cost", "co2_total": "co2"})
     
-    # Merge composite scores back into the main trace_df for the report
     score_cols = ['composite_score', 'norm_co2', 'norm_cost', 'norm_purpose']
     if all(col in feasible_candidates_df.columns for col in score_cols):
         scores_to_merge = feasible_candidates_df[score_cols]
@@ -1023,7 +987,7 @@ def generate_baseline(grade, exposure, nom_max, target_slump, agg_shape,
         "co2_total": float(df["CO2_Emissions (kg/m3)"].sum()),
         "cost_total": float(df["Cost (₹/m3)"].sum()),
         "coarse_agg_fraction": coarse_agg_frac, "material_props": material_props,
-        "binder_range": (min_b_grade, max_b_grade) # Added for walkthrough
+        "binder_range": (min_b_grade, max_b_grade)
     }
     
     if purpose_profile is None:
@@ -1180,7 +1144,6 @@ def display_calculation_walkthrough(meta):
           - **Coarse Aggregate:** **`{meta['coarse']:.1f}` kg/m³**
     """)
 
-
 # ==============================================================================
 # PART 5: CORE GENERATION LOGIC (MODULARIZED)
 # ==============================================================================
@@ -1278,7 +1241,6 @@ def run_generation_logic(inputs: dict, emissions_df: pd.DataFrame, costs_df: pd.
         st.exception(traceback.format_exc())
         st.session_state.results = {"success": False, "trace": None}
 
-
 # ==============================================================================
 # PART 6: STREAMLIT APP (UI Sub-modules)
 # ==============================================================================
@@ -1324,24 +1286,18 @@ def run_chat_interface(purpose_profiles_data: dict):
 
     # --- Handle new user prompt ---
     if user_prompt := st.chat_input("Ask CivilGPT anything about your concrete mix..."):
-        # Add user message to history
         st.session_state.chat_history.append({"role": "user", "content": user_prompt})
         
-        # Parse the prompt
         parsed_params = parse_user_prompt_llm(user_prompt)
         
-        # Update the progressively-filled inputs
         if parsed_params:
             st.session_state.chat_inputs.update(parsed_params)
-            # Log what was understood
             parsed_summary = ", ".join([f"**{k}**: {v}" for k, v in parsed_params.items()])
             st.session_state.chat_history.append({"role": "assistant", "content": f"Got it. Understood: {parsed_summary}"})
 
-        # Check for missing required fields
         missing_fields = [f for f in CONSTANTS.CHAT_REQUIRED_FIELDS if st.session_state.chat_inputs.get(f) is None]
         
         if missing_fields:
-            # If fields are missing, ask the next question
             field_to_ask = missing_fields[0]
             question = get_clarification_question(field_to_ask)
             st.session_state.chat_history.append({"role": "assistant", "content": question})
@@ -1647,9 +1603,9 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
             st.markdown("---")
             col1, col2 = st.columns(2)
             _plot_overview_chart(col1, "📊 Embodied Carbon (CO₂e)", "CO₂ (kg/m³)", 
-                                co2_base, co2_opt, ['#D3D3D3', '#4CAF50'], '{:,.1f}')
+                                 co2_base, co2_opt, ['#D3D3D3', '#4CAF50'], '{:,.1f}')
             _plot_overview_chart(col2, "💵 Material Cost", "Cost (₹/m³)", 
-                                cost_base, cost_opt, ['#D3D3D3', '#2196F3'], '₹{:,.0f}')
+                                 cost_base, cost_opt, ['#D3D3D3', '#2196F3'], '₹{:,.0f}')
 
         with tab2:
             display_mix_details("🌱 Optimized Low-Carbon Mix Design", opt_df, opt_meta, inputs['exposure'])
@@ -1704,7 +1660,6 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                         c2.metric("🌱 CO₂", f"{best_compromise_mix['co2']:.1f} kg / m³")
                         c3.metric("💧 Water/Binder Ratio", f"{best_compromise_mix['wb']:.3f}")
                         
-                        # Find the full mix data from the trace
                         full_compromise_mix = trace_df[
                             (trace_df['cost'] == best_compromise_mix['cost']) &
                             (trace_df['co2'] == best_compromise_mix['co2'])
@@ -1726,7 +1681,6 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
             sample_fa_data = "Sieve_mm,PercentPassing\n4.75,95\n2.36,80\n1.18,60\n0.600,40\n0.300,15\n0.150,5"
             sample_ca_data = "Sieve_mm,PercentPassing\n40.0,100\n20.0,98\n10.0,40\n4.75,5"
             
-            # Use the correct file upload variables based on mode
             fine_csv_to_use = st.session_state.get('fine_csv')
             coarse_csv_to_use = st.session_state.get('coarse_csv')
 
@@ -1907,7 +1861,6 @@ def main():
         .stTextArea [data-baseweb=base-input] {
             border-color: #4A90E2; box-shadow: 0 0 5px #4A90E2;
         }
-        /* Style chat messages */
         [data-testid="chat-message-container"] {
             border-radius: 8px;
             padding: 0.75rem;
@@ -1925,7 +1878,7 @@ def main():
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
     if "chat_inputs" not in st.session_state:
-        st.session_state.chat_inputs = {} # This will store the progressively filled params
+        st.session_state.chat_inputs = {}
     if "chat_results_displayed" not in st.session_state:
         st.session_state.chat_results_displayed = False
     if "run_chat_generation" not in st.session_state:
@@ -1936,25 +1889,21 @@ def main():
     # --- 2. SIDEBAR SETUP (COMMON ELEMENTS) ---
     st.sidebar.title("Mode Selection")
 
-    # --- Display LLM Initialization Message (from global scope) ---
     if "llm_init_message" in st.session_state:
         msg_type, msg_content = st.session_state.pop("llm_init_message")
-        if msg_type == "success":
-            st.sidebar.success(msg_content, icon="🤖")
-        elif msg_type == "info":
-            st.sidebar.info(msg_content, icon="ℹ️")
-        elif msg_type == "warning":
-            st.sidebar.warning(msg_content, icon="⚠️")
+        if msg_type == "success": st.sidebar.success(msg_content, icon="🤖")
+        elif msg_type == "info": st.sidebar.info(msg_content, icon="ℹ️")
+        elif msg_type == "warning": st.sidebar.warning(msg_content, icon="⚠️")
 
     llm_is_ready = st.session_state.get("llm_enabled", False)
     chat_mode = st.sidebar.toggle(
         "💬 Switch to CivilGPT Chat Mode", 
-        value=st.session_state.chat_mode if llm_is_ready else False, # Force false if LLM disabled
+        value=st.session_state.chat_mode if llm_is_ready else False,
         key="chat_mode_toggle",
         help="Toggle to use a conversational interface." if llm_is_ready else "Chat Mode requires a valid GROQ_API_KEY.",
         disabled=not llm_is_ready
     )
-    st.session_state.chat_mode = chat_mode # Store state
+    st.session_state.chat_mode = chat_mode
 
     if chat_mode:
         if st.sidebar.button("🧹 Clear Chat History", use_container_width=True):
@@ -1979,14 +1928,9 @@ def main():
     if st.session_state.get('run_chat_generation', False):
         st.session_state.run_chat_generation = False # Consume flag
         
-        # Build Full Inputs from Chat + Defaults
         chat_inputs = st.session_state.chat_inputs
-        
-        # Load default material props (if not in library)
-        # This mirrors the logic in the 'manual_mode=False' branch
         default_material_props = {'sg_fa': 2.65, 'moisture_fa': 1.0, 'sg_ca': 2.70, 'moisture_ca': 0.5}
         
-        # Merge defaults with chat inputs
         inputs = {
             "grade": "M30", "exposure": "Severe", "cement_choice": "OPC 43",
             "nom_max": 20, "agg_shape": "Angular (baseline)", "target_slump": 125,
@@ -1999,15 +1943,13 @@ def main():
             **chat_inputs # Override defaults with chat values
         }
         
-        # Post-processing inputs
         inputs["optimize_cost"] = (inputs["optimize_for"] == "Cost")
         inputs["enable_purpose_optimization"] = (inputs["purpose"] != 'General')
         if inputs["enable_purpose_optimization"]:
             inputs["purpose_weights"] = purpose_profiles_data.get(inputs["purpose"], {}).get('weights', purpose_profiles_data['General']['weights'])
 
-        st.session_state.final_inputs = inputs # Store for report
+        st.session_state.final_inputs = inputs
         
-        # Run the generation logic
         with st.spinner("⚙️ Running IS-code calculations and optimizing..."):
             run_generation_logic(
                 inputs=inputs,
