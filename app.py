@@ -11,6 +11,8 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import inch
+from functools import lru_cache
+from itertools import product
 
 # ==============================================================================
 # PART 1: CONSTANTS & CORE DATA
@@ -77,6 +79,16 @@ class CONSTANTS:
         "Precast": {"description": "Prioritizes high early strength (for form stripping), surface finish, and cost (reproducibility).", "wb_limit": 0.45, "scm_limit": 0.3, "min_binder": 360, "weights": {"co2": 0.2, "cost": 0.5, "purpose": 0.3}}
     }
     CEMENT_TYPES = ["OPC 33", "OPC 43", "OPC 53", "PPC"]
+    
+    # Normalized names for vectorized computation
+    NORM_CEMENT = "cement"
+    NORM_FLYASH = "fly ash"
+    NORM_GGBS = "ggbs"
+    NORM_WATER = "water"
+    NORM_SP = "pce superplasticizer"
+    NORM_FINE_AGG = "fine aggregate"
+    NORM_COARSE_AGG = "coarse aggregate"
+
 
 # ==============================================================================
 # PART 2: CACHED LOADERS & BACKEND LOGIC
@@ -117,6 +129,7 @@ def _normalize_header(header):
     s = re.sub(r'_+', '_', s)
     return s.strip('_')
 
+@lru_cache(maxsize=128)
 def _normalize_material_value(s: str) -> str:
     if s is None: return ""
     s = str(s).strip().lower()
@@ -124,14 +137,14 @@ def _normalize_material_value(s: str) -> str:
     s = re.sub(r'[^a-z0-9\s]', ' ', s)
     s = re.sub(r'\s+', ' ', s).strip().replace('mm', '').strip()
     synonyms = {
-        "m sand": "fine aggregate", "msand": "fine aggregate", "m-sand": "fine aggregate",
-        "fine aggregate": "fine aggregate", "sand": "fine aggregate",
-        "20 coarse aggregate": "coarse aggregate", "20mm coarse aggregate": "coarse aggregate",
-        "20 coarse": "coarse aggregate", "20": "coarse aggregate", "coarse aggregate": "coarse aggregate",
-        "20mm": "coarse aggregate", "pce superplasticizer": "pce superplasticizer",
-        "pce superplasticiser": "pce superplasticizer", "pce": "pce superplasticizer",
+        "m sand": CONSTANTS.NORM_FINE_AGG, "msand": CONSTANTS.NORM_FINE_AGG, "m-sand": CONSTANTS.NORM_FINE_AGG,
+        "fine aggregate": CONSTANTS.NORM_FINE_AGG, "sand": CONSTANTS.NORM_FINE_AGG,
+        "20 coarse aggregate": CONSTANTS.NORM_COARSE_AGG, "20mm coarse aggregate": CONSTANTS.NORM_COARSE_AGG,
+        "20 coarse": CONSTANTS.NORM_COARSE_AGG, "20": CONSTANTS.NORM_COARSE_AGG, "coarse aggregate": CONSTANTS.NORM_COARSE_AGG,
+        "20mm": CONSTANTS.NORM_COARSE_AGG, "pce superplasticizer": CONSTANTS.NORM_SP,
+        "pce superplasticiser": CONSTANTS.NORM_SP, "pce": CONSTANTS.NORM_SP,
         "opc 33": "opc 33", "opc 43": "opc 43", "opc 53": "opc 53", "ppc": "ppc",
-        "fly ash": "fly ash", "ggbs": "ggbs", "water": "water",
+        "fly ash": CONSTANTS.NORM_FLYASH, "ggbs": CONSTANTS.NORM_GGBS, "water": CONSTANTS.NORM_WATER,
     }
     if s in synonyms: return synonyms[s]
     cand = get_close_matches(s, list(synonyms.keys()), n=1, cutoff=0.78)
@@ -139,6 +152,10 @@ def _normalize_material_value(s: str) -> str:
     key2 = re.sub(r'^\d+\s*', '', s)
     cand = get_close_matches(key2, list(synonyms.keys()), n=1, cutoff=0.78)
     if cand: return synonyms[cand[0]]
+    
+    # Handle cement types not explicitly in synonyms
+    if s.startswith("opc"): return s
+    
     return s
 
 def _normalize_columns(df, column_map):
@@ -167,6 +184,7 @@ def _minmax_scale(series: pd.Series) -> pd.Series:
         return pd.Series(0.0, index=series.index, dtype=float)
     return (series - min_val) / (max_val - min_val)
 
+@st.cache_data
 def load_purpose_profiles(filepath=None):
     return CONSTANTS.PURPOSE_PROFILES
 
@@ -206,6 +224,28 @@ def compute_purpose_penalty(candidate_meta: dict, purpose_profile: dict) -> floa
         return float(max(0.0, penalty))
     except Exception:
         return 0.0
+
+@st.cache_data
+def compute_purpose_penalty_vectorized(df: pd.DataFrame, purpose_profile: dict) -> pd.Series:
+    """Vectorized version of compute_purpose_penalty for the optimization grid."""
+    if not purpose_profile:
+        return pd.Series(0.0, index=df.index)
+    
+    penalty = pd.Series(0.0, index=df.index)
+    
+    # W/B penalty
+    wb_limit = purpose_profile.get('wb_limit', 1.0)
+    penalty += (df['w_b'] - wb_limit).clip(lower=0) * 1000
+    
+    # SCM penalty
+    scm_limit = purpose_profile.get('scm_limit', 0.5)
+    penalty += (df['scm_total_frac'] - scm_limit).clip(lower=0) * 100
+    
+    # Min binder penalty
+    min_binder = purpose_profile.get('min_binder', 0.0)
+    penalty += (min_binder - df['binder']).clip(lower=0) * 0.1
+    
+    return penalty.fillna(0.0)
 
 @st.cache_data
 def load_data(materials_file=None, emissions_file=None, cost_file=None):
@@ -266,6 +306,7 @@ def pareto_front(df, x_col="cost", y_col="co2"):
     if not pareto_points: return pd.DataFrame(columns=df.columns)
     return pd.DataFrame(pareto_points).reset_index(drop=True)
 
+@st.cache_data
 def water_for_slump_and_shape(nom_max_mm: int, slump_mm: int, agg_shape: str, uses_sp: bool=False, sp_reduction_frac: float=0.0) -> float:
     base = CONSTANTS.WATER_BASELINE.get(int(nom_max_mm), 186.0)
     water = base if slump_mm <= 50 else base * (1 + 0.03 * ((slump_mm - 50) / 25.0))
@@ -276,12 +317,28 @@ def water_for_slump_and_shape(nom_max_mm: int, slump_mm: int, agg_shape: str, us
 def reasonable_binder_range(grade: str):
     return CONSTANTS.BINDER_RANGES.get(grade, (300, 500))
 
-def get_coarse_agg_fraction(nom_max_mm: float, fa_zone: str, wb_ratio: float):
-    base_fraction = CONSTANTS.COARSE_AGG_FRAC_BY_ZONE.get(nom_max_mm, {}).get(fa_zone, 0.62)
+@st.cache_data
+def _get_coarse_agg_fraction_base(nom_max_mm: float, fa_zone: str) -> float:
+    """Helper to get the scalar base fraction."""
+    return CONSTANTS.COARSE_AGG_FRAC_BY_ZONE.get(nom_max_mm, {}).get(fa_zone, 0.62)
+
+@st.cache_data
+def get_coarse_agg_fraction(nom_max_mm: float, fa_zone: str, wb_ratio: float) -> float:
+    """Scalar version for baseline calculation."""
+    base_fraction = _get_coarse_agg_fraction_base(nom_max_mm, fa_zone)
     correction = ((0.50 - wb_ratio) / 0.05) * 0.01
     corrected_fraction = base_fraction + correction
     return max(0.4, min(0.8, corrected_fraction))
 
+@st.cache_data
+def get_coarse_agg_fraction_vectorized(nom_max_mm: float, fa_zone: str, wb_ratio_series: pd.Series) -> pd.Series:
+    """Vectorized version for optimization grid."""
+    base_fraction = _get_coarse_agg_fraction_base(nom_max_mm, fa_zone)
+    correction = ((0.50 - wb_ratio_series) / 0.05) * 0.01
+    corrected_fraction = base_fraction + correction
+    return corrected_fraction.clip(0.4, 0.8)
+
+@st.cache_data
 def run_lab_calibration(lab_df):
     results = []
     std_dev_S = CONSTANTS.QC_STDDEV["Good"]
@@ -308,6 +365,7 @@ def run_lab_calibration(lab_df):
     metrics = {"Mean Absolute Error (MPa)": mae, "Root Mean Squared Error (MPa)": rmse, "Mean Bias (MPa)": bias}
     return results_df, metrics
 
+@st.cache_data
 def simple_parse(text: str) -> dict:
     result = {}
     grade_match = re.search(r"\bM\s*(10|15|20|25|30|35|40|45|50)\b", text, re.IGNORECASE)
@@ -397,6 +455,12 @@ def aggregate_correction(delta_moisture_pct: float, agg_mass_ssd: float):
     corrected_mass = agg_mass_ssd * (1 + delta_moisture_pct / 100.0)
     return float(water_delta), float(corrected_mass)
 
+def aggregate_correction_vectorized(delta_moisture_pct: float, agg_mass_ssd_series: pd.Series):
+    """Vectorized version of aggregate_correction."""
+    water_delta_series = (delta_moisture_pct / 100.0) * agg_mass_ssd_series
+    corrected_mass_series = agg_mass_ssd_series * (1 + delta_moisture_pct / 100.0)
+    return water_delta_series, corrected_mass_series
+
 def compute_aggregates(cementitious, water, sp, coarse_agg_fraction, nom_max_mm, density_fa=2650.0, density_ca=2700.0):
     vol_cem = cementitious / 3150.0
     vol_wat = water / 1000.0
@@ -410,6 +474,24 @@ def compute_aggregates(cementitious, water, sp, coarse_agg_fraction, nom_max_mm,
     mass_fine_ssd = vol_fine * density_fa
     mass_coarse_ssd = vol_coarse * density_ca
     return float(mass_fine_ssd), float(mass_coarse_ssd)
+
+def compute_aggregates_vectorized(binder_series, water_scalar, sp_series, coarse_agg_frac_series, nom_max_mm, density_fa, density_ca):
+    """Vectorized version of compute_aggregates."""
+    vol_cem = binder_series / 3150.0
+    vol_wat = water_scalar / 1000.0  # Scalar
+    vol_sp = sp_series / 1200.0
+    vol_air = CONSTANTS.ENTRAPPED_AIR_VOL.get(int(nom_max_mm), 0.01)  # Scalar
+    
+    vol_paste_and_air = vol_cem + vol_wat + vol_sp + vol_air
+    vol_agg = (1.0 - vol_paste_and_air).clip(lower=0.60)  # Handle negative volumes
+    
+    vol_coarse = vol_agg * coarse_agg_frac_series
+    vol_fine = vol_agg * (1.0 - coarse_agg_frac_series)
+    
+    mass_fine_ssd = vol_fine * density_fa
+    mass_coarse_ssd = vol_coarse * density_ca
+    
+    return mass_fine_ssd, mass_coarse_ssd
 
 def compliance_checks(mix_df, meta, exposure):
     checks = {}
@@ -488,6 +570,45 @@ def get_compliance_reasons(mix_df, meta, exposure):
     feasible = len(reasons) == 0
     return feasible, "All IS-code checks passed." if feasible else "; ".join(reasons)
 
+def get_compliance_reasons_vectorized(df: pd.DataFrame, exposure: str) -> pd.Series:
+    """Vectorized version of get_compliance_reasons for the optimization grid."""
+    limit_wb = CONSTANTS.EXPOSURE_WB_LIMITS[exposure]
+    limit_cem = CONSTANTS.EXPOSURE_MIN_CEMENT[exposure]
+    
+    # Start with empty strings
+    reasons = pd.Series("", index=df.index, dtype=str)
+    
+    # Append failure reasons vector-wise
+    reasons += np.where(
+        df['w_b'] > limit_wb,
+        "Failed W/B ratio (" + df['w_b'].round(3).astype(str) + " > " + str(limit_wb) + "); ",
+        ""
+    )
+    reasons += np.where(
+        df['binder'] < limit_cem,
+        "Cementitious below minimum (" + df['binder'].round(1).astype(str) + " < " + str(limit_cem) + "); ",
+        ""
+    )
+    reasons += np.where(
+        df['scm_total_frac'] > 0.50,
+        "SCM fraction exceeds limit (" + (df['scm_total_frac'] * 100).round(0).astype(str) + "% > 50%); ",
+        ""
+    )
+    reasons += np.where(
+        ~((df['total_mass'] >= 2200) & (df['total_mass'] <= 2600)),
+        "Unit weight outside range (" + df['total_mass'].round(1).astype(str) + " not in 2200-2600); ",
+        ""
+    )
+    
+    # Clean up trailing semicolons/spaces
+    reasons = reasons.str.strip().str.rstrip(';')
+    
+    # Set success message for rows with no failure reasons
+    reasons = np.where(reasons == "", "All IS-code checks passed.", reasons)
+    
+    return reasons
+
+@st.cache_data
 def sieve_check_fa(df: pd.DataFrame, zone: str):
     try:
         limits, ok, msgs = CONSTANTS.FINE_AGG_ZONE_LIMITS[zone], True, []
@@ -501,6 +622,7 @@ def sieve_check_fa(df: pd.DataFrame, zone: str):
         return ok, msgs
     except: return False, ["Invalid fine aggregate CSV format. Ensure 'Sieve_mm' and 'PercentPassing' columns exist."]
 
+@st.cache_data
 def sieve_check_ca(df: pd.DataFrame, nominal_mm: int):
     try:
         limits, ok, msgs = CONSTANTS.COARSE_LIMITS[int(nominal_mm)], True, []
@@ -514,129 +636,255 @@ def sieve_check_ca(df: pd.DataFrame, nominal_mm: int):
         return ok, msgs
     except: return False, ["Invalid coarse aggregate CSV format. Ensure 'Sieve_mm' and 'PercentPassing' columns exist."]
 
+@st.cache_data
+def _get_material_factors(materials_list, emissions_df, costs_df):
+    """
+    Pre-computes CO2 and Cost factors for a list of materials to avoid
+    merging DataFrames inside a loop.
+    Returns two dictionaries: co2_factors_dict, cost_factors_dict
+    """
+    # Normalize input materials
+    norm_map = {m: _normalize_material_value(m) for m in materials_list}
+    norm_materials = list(set(norm_map.values()))
+
+    # Process Emissions
+    co2_factors_dict = {}
+    if emissions_df is not None and not emissions_df.empty and "CO2_Factor(kg_CO2_per_kg)" in emissions_df.columns:
+        emissions_df_norm = emissions_df.copy()
+        emissions_df_norm['Material'] = emissions_df_norm['Material'].astype(str)
+        emissions_df_norm["Material_norm"] = emissions_df_norm["Material"].apply(_normalize_material_value)
+        emissions_df_norm = emissions_df_norm.drop_duplicates(subset=["Material_norm"]).set_index("Material_norm")
+        co2_factors_dict = emissions_df_norm["CO2_Factor(kg_CO2_per_kg)"].to_dict()
+
+    # Process Costs
+    cost_factors_dict = {}
+    if costs_df is not None and not costs_df.empty and "Cost(₹/kg)" in costs_df.columns:
+        costs_df_norm = costs_df.copy()
+        costs_df_norm['Material'] = costs_df_norm['Material'].astype(str)
+        costs_df_norm["Material_norm"] = costs_df_norm["Material"].apply(_normalize_material_value)
+        costs_df_norm = costs_df_norm.drop_duplicates(subset=["Material_norm"]).set_index("Material_norm")
+        cost_factors_dict = costs_df_norm["Cost(₹/kg)"].to_dict()
+
+    # Create final lookup dictionaries, defaulting to 0.0
+    final_co2 = {norm: co2_factors_dict.get(norm, 0.0) for norm in norm_materials}
+    final_cost = {norm: cost_factors_dict.get(norm, 0.0) for norm in norm_materials}
+    
+    return final_co2, final_cost
+
 def generate_mix(grade, exposure, nom_max, target_slump, agg_shape, fine_zone, 
                  emissions, costs, cement_choice, material_props, 
                  use_sp=True, sp_reduction=0.18, optimize_cost=False, 
                  wb_min=0.35, wb_steps=6, max_flyash_frac=0.3, max_ggbs_frac=0.5, 
                  scm_step=0.1, fine_fraction_override=None,
                  purpose='General', purpose_profile=None, purpose_weights=None,
-                 enable_purpose_optimization=False):
+                 enable_purpose_optimization=False, st_progress=None):
 
+    # --- 1. Setup Parameters ---
+    if st_progress: st_progress.progress(0.0, text="Initializing parameters...")
+    
     w_b_limit = float(CONSTANTS.EXPOSURE_WB_LIMITS[exposure])
     min_cem_exp = float(CONSTANTS.EXPOSURE_MIN_CEMENT[exposure])
     target_water = water_for_slump_and_shape(nom_max_mm=nom_max, slump_mm=int(target_slump), agg_shape=agg_shape, uses_sp=use_sp, sp_reduction_frac=sp_reduction)
-    
-    trace, feasible_candidates = [], []
-    wb_values = np.linspace(float(wb_min), float(w_b_limit), int(wb_steps))
-    flyash_options = np.arange(0.0, max_flyash_frac + 1e-9, scm_step)
-    ggbs_options = np.arange(0.0, max_ggbs_frac + 1e-9, scm_step)
     min_b_grade, max_b_grade = reasonable_binder_range(grade)
-
+    density_fa, density_ca = material_props['sg_fa'] * 1000, material_props['sg_ca'] * 1000
+    
+    # Clear session state warnings for this run
     if 'warned_emissions' in st.session_state: st.session_state.warned_emissions.clear()
     if 'warned_costs' in st.session_state: st.session_state.warned_costs.clear()
         
     if purpose_profile is None: purpose_profile = CONSTANTS.PURPOSE_PROFILES['General']
     if purpose_weights is None: purpose_weights = CONSTANTS.PURPOSE_PROFILES['General']['weights']
 
-    for wb in wb_values:
-        for flyash_frac in flyash_options:
-            for ggbs_frac in ggbs_options:
-                if flyash_frac + ggbs_frac > 0.50: continue
-
-                binder_for_strength = target_water / wb
-                binder = max(binder_for_strength, min_cem_exp, min_b_grade)
-                binder = min(binder, max_b_grade)
-                actual_wb = target_water / binder
-
-                cement, flyash, ggbs = binder * (1 - flyash_frac - ggbs_frac), binder * flyash_frac, binder * ggbs_frac
-                sp = 0.01 * binder if use_sp else 0.0
-                density_fa, density_ca = material_props['sg_fa'] * 1000, material_props['sg_ca'] * 1000
-
-                if fine_fraction_override is not None:
-                    coarse_agg_frac = 1.0 - fine_fraction_override
-                else:
-                    coarse_agg_frac = get_coarse_agg_fraction(nom_max, fine_zone, actual_wb)
-
-                fine_ssd, coarse_ssd = compute_aggregates(binder, target_water, sp, coarse_agg_frac, nom_max, density_fa, density_ca)
-                water_delta_fa, fine_wet = aggregate_correction(material_props['moisture_fa'], fine_ssd)
-                water_delta_ca, coarse_wet = aggregate_correction(material_props['moisture_ca'], coarse_ssd)
-
-                water_final = max(5.0, target_water - (water_delta_fa + water_delta_ca))
-
-                mix = {cement_choice: cement,"Fly Ash": flyash,"GGBS": ggbs,"Water": water_final,"PCE Superplasticizer": sp,"Fine Aggregate": fine_wet,"Coarse Aggregate": coarse_wet}
-                df = evaluate_mix(mix, emissions, costs)
-                co2_total, cost_total = float(df["CO2_Emissions (kg/m3)"].sum()), float(df["Cost (₹/m3)"].sum())
-
-                candidate_meta = {
-                    "w_b": actual_wb, "cementitious": binder, "cement": cement, 
-                    "flyash": flyash, "ggbs": ggbs, "water_target": target_water, 
-                    "water_final": water_final, "sp": sp, "fine": fine_wet, 
-                    "coarse": coarse_wet, "scm_total_frac": flyash_frac + ggbs_frac, 
-                    "grade": grade, "exposure": exposure, "nom_max": nom_max, 
-                    "slump": target_slump, "co2_total": co2_total, "cost_total": cost_total,
-                    "coarse_agg_fraction": coarse_agg_frac, "binder_range": (min_b_grade, max_b_grade), 
-                    "material_props": material_props, "df": df.copy()
-                }
-                
-                purpose_metrics = evaluate_purpose_specific_metrics(candidate_meta, purpose)
-                purpose_penalty = compute_purpose_penalty(candidate_meta, purpose_profile)
-                
-                candidate_meta.update({
-                    "purpose": purpose, "purpose_metrics": purpose_metrics, "purpose_penalty": purpose_penalty
-                })
-
-                feasible, _, _, _, _ = check_feasibility(df, candidate_meta, exposure)
-                trace_feasible, trace_reasons = get_compliance_reasons(df, candidate_meta, exposure)
-                
-                trace.append({
-                    "wb": float(actual_wb), "flyash_frac": float(flyash_frac), "ggbs_frac": float(ggbs_frac),
-                    "co2": float(co2_total), "cost": float(cost_total),
-                    "score": float(cost_total if optimize_cost else co2_total),
-                    "feasible": bool(trace_feasible), "reasons": str(trace_reasons),
-                    "purpose": purpose, "purpose_penalty": float(purpose_penalty),
-                    "composite_score": np.nan, "norm_co2": np.nan, "norm_cost": np.nan, "norm_purpose": np.nan
-                })
-                
-                if feasible:
-                    feasible_candidates.append(candidate_meta)
-                        
-    if not feasible_candidates:
-        return None, None, trace
-
-    feasible_df = pd.DataFrame(feasible_candidates)
-    trace_df = pd.DataFrame(trace)
+    # --- 2. Pre-compute Cost/CO2 Factors (Vectorization Prep) ---
+    if st_progress: st_progress.progress(0.05, text="Pre-computing cost/CO2 factors...")
     
+    norm_cement_choice = _normalize_material_value(cement_choice)
+    materials_to_calc = [
+        norm_cement_choice, CONSTANTS.NORM_FLYASH, CONSTANTS.NORM_GGBS,
+        CONSTANTS.NORM_WATER, CONSTANTS.NORM_SP, CONSTANTS.NORM_FINE_AGG,
+        CONSTANTS.NORM_COARSE_AGG
+    ]
+    co2_factors, cost_factors = _get_material_factors(materials_to_calc, emissions, costs)
+
+    # --- 3. Create Parameter Grid ---
+    if st_progress: st_progress.progress(0.1, text="Creating optimization grid...")
+    
+    wb_values = np.linspace(float(wb_min), float(w_b_limit), int(wb_steps))
+    flyash_options = np.arange(0.0, max_flyash_frac + 1e-9, scm_step)
+    ggbs_options = np.arange(0.0, max_ggbs_frac + 1e-9, scm_step)
+    
+    grid_params = list(product(wb_values, flyash_options, ggbs_options))
+    grid_df = pd.DataFrame(grid_params, columns=['wb_input', 'flyash_frac', 'ggbs_frac'])
+    
+    # SCM constraint
+    grid_df = grid_df[grid_df['flyash_frac'] + grid_df['ggbs_frac'] <= 0.50].copy()
+    if grid_df.empty:
+        return None, None, [] # No feasible SCM combinations
+
+    # --- 4. Vectorized Mix Calculations ---
+    if st_progress: st_progress.progress(0.2, text="Calculating binder properties...")
+    
+    # Binder calculations
+    grid_df['binder_for_strength'] = target_water / grid_df['wb_input']
+    grid_df['binder'] = np.maximum.reduce([grid_df['binder_for_strength'], min_cem_exp, min_b_grade])
+    grid_df['binder'] = np.minimum(grid_df['binder'], max_b_grade)
+    grid_df['w_b'] = target_water / grid_df['binder']
+    
+    # Component mass calculations
+    grid_df['scm_total_frac'] = grid_df['flyash_frac'] + grid_df['ggbs_frac']
+    grid_df['cement'] = grid_df['binder'] * (1 - grid_df['scm_total_frac'])
+    grid_df['flyash'] = grid_df['binder'] * grid_df['flyash_frac']
+    grid_df['ggbs'] = grid_df['binder'] * grid_df['ggbs_frac']
+    grid_df['sp'] = (0.01 * grid_df['binder']) if use_sp else 0.0
+    
+    if st_progress: st_progress.progress(0.3, text="Calculating aggregate proportions...")
+    
+    # Aggregate proportions
+    if fine_fraction_override is not None:
+        grid_df['coarse_agg_fraction'] = 1.0 - fine_fraction_override
+    else:
+        grid_df['coarse_agg_fraction'] = get_coarse_agg_fraction_vectorized(nom_max, fine_zone, grid_df['w_b'])
+    
+    # Aggregate mass (SSD)
+    grid_df['fine_ssd'], grid_df['coarse_ssd'] = compute_aggregates_vectorized(
+        grid_df['binder'], target_water, grid_df['sp'], grid_df['coarse_agg_fraction'],
+        nom_max, density_fa, density_ca
+    )
+    
+    # Moisture corrections
+    water_delta_fa_series, grid_df['fine_wet'] = aggregate_correction_vectorized(
+        material_props['moisture_fa'], grid_df['fine_ssd']
+    )
+    water_delta_ca_series, grid_df['coarse_wet'] = aggregate_correction_vectorized(
+        material_props['moisture_ca'], grid_df['coarse_ssd']
+    )
+    
+    # Final water
+    grid_df['water_final'] = (target_water - (water_delta_fa_series + water_delta_ca_series)).clip(lower=5.0)
+
+    # --- 5. Vectorized Cost & CO2 Calculations ---
+    if st_progress: st_progress.progress(0.5, text="Calculating cost and CO2...")
+    
+    grid_df['co2_total'] = (
+        grid_df['cement'] * co2_factors.get(norm_cement_choice, 0.0) +
+        grid_df['flyash'] * co2_factors.get(CONSTANTS.NORM_FLYASH, 0.0) +
+        grid_df['ggbs'] * co2_factors.get(CONSTANTS.NORM_GGBS, 0.0) +
+        grid_df['water_final'] * co2_factors.get(CONSTANTS.NORM_WATER, 0.0) +
+        grid_df['sp'] * co2_factors.get(CONSTANTS.NORM_SP, 0.0) +
+        grid_df['fine_wet'] * co2_factors.get(CONSTANTS.NORM_FINE_AGG, 0.0) +
+        grid_df['coarse_wet'] * co2_factors.get(CONSTANTS.NORM_COARSE_AGG, 0.0)
+    )
+    
+    grid_df['cost_total'] = (
+        grid_df['cement'] * cost_factors.get(norm_cement_choice, 0.0) +
+        grid_df['flyash'] * cost_factors.get(CONSTANTS.NORM_FLYASH, 0.0) +
+        grid_df['ggbs'] * cost_factors.get(CONSTANTS.NORM_GGBS, 0.0) +
+        grid_df['water_final'] * cost_factors.get(CONSTANTS.NORM_WATER, 0.0) +
+        grid_df['sp'] * cost_factors.get(CONSTANTS.NORM_SP, 0.0) +
+        grid_df['fine_wet'] * cost_factors.get(CONSTANTS.NORM_FINE_AGG, 0.0) +
+        grid_df['coarse_wet'] * cost_factors.get(CONSTANTS.NORM_COARSE_AGG, 0.0)
+    )
+
+    # --- 6. Vectorized Feasibility & Purpose Scoring ---
+    if st_progress: st_progress.progress(0.7, text="Checking compliance and purpose-fit...")
+    
+    # Total mass for unit weight check
+    grid_df['total_mass'] = (
+        grid_df['cement'] + grid_df['flyash'] + grid_df['ggbs'] + 
+        grid_df['water_final'] + grid_df['sp'] + 
+        grid_df['fine_wet'] + grid_df['coarse_wet']
+    )
+    
+    # Feasibility checks
+    grid_df['check_wb'] = grid_df['w_b'] <= w_b_limit
+    grid_df['check_min_cem'] = grid_df['binder'] >= min_cem_exp
+    grid_df['check_scm'] = grid_df['scm_total_frac'] <= 0.50
+    grid_df['check_unit_wt'] = (grid_df['total_mass'] >= 2200.0) & (grid_df['total_mass'] <= 2600.0)
+    
+    grid_df['feasible'] = (
+        grid_df['check_wb'] & grid_df['check_min_cem'] &
+        grid_df['check_scm'] & grid_df['check_unit_wt']
+    )
+    
+    # Feasibility reasons (for trace)
+    grid_df['reasons'] = get_compliance_reasons_vectorized(grid_df, exposure)
+    
+    # Purpose scoring
+    grid_df['purpose_penalty'] = compute_purpose_penalty_vectorized(grid_df, purpose_profile)
+    grid_df['purpose'] = purpose
+
+    # --- 7. Candidate Selection ---
+    if st_progress: st_progress.progress(0.8, text="Finding best mix design...")
+    
+    feasible_candidates_df = grid_df[grid_df['feasible']].copy()
+    
+    if feasible_candidates_df.empty:
+        trace_df = grid_df.rename(columns={"w_b": "wb", "cost_total": "cost", "co2_total": "co2"})
+        return None, None, trace_df.to_dict('records')
+
+    # --- 8. Optimization & Selection ---
     if not enable_purpose_optimization or purpose == 'General':
         objective_col = 'cost_total' if optimize_cost else 'co2_total'
-        best_idx = feasible_df[objective_col].idxmin()
-        best_meta = feasible_df.loc[best_idx].to_dict()
-        best_meta["composite_score"] = np.nan
+        feasible_candidates_df['composite_score'] = np.nan # Not used
+        best_idx = feasible_candidates_df[objective_col].idxmin()
     else:
-        feasible_df['norm_co2'] = _minmax_scale(feasible_df['co2_total'])
-        feasible_df['norm_cost'] = _minmax_scale(feasible_df['cost_total'])
-        feasible_df['norm_purpose'] = _minmax_scale(feasible_df['purpose_penalty'])
+        feasible_candidates_df['norm_co2'] = _minmax_scale(feasible_candidates_df['co2_total'])
+        feasible_candidates_df['norm_cost'] = _minmax_scale(feasible_candidates_df['cost_total'])
+        feasible_candidates_df['norm_purpose'] = _minmax_scale(feasible_candidates_df['purpose_penalty'])
         
         w_co2 = purpose_weights.get('w_co2', 0.4)
         w_cost = purpose_weights.get('w_cost', 0.4)
         w_purpose = purpose_weights.get('w_purpose', 0.2)
         
-        feasible_df['composite_score'] = (
-            w_co2 * feasible_df['norm_co2'] +
-            w_cost * feasible_df['norm_cost'] +
-            w_purpose * feasible_df['norm_purpose']
+        feasible_candidates_df['composite_score'] = (
+            w_co2 * feasible_candidates_df['norm_co2'] +
+            w_cost * feasible_candidates_df['norm_cost'] +
+            w_purpose * feasible_candidates_df['norm_purpose']
         )
-        
-        best_idx = feasible_df['composite_score'].idxmin()
-        best_meta = feasible_df.loc[best_idx].to_dict()
+        best_idx = feasible_candidates_df['composite_score'].idxmin()
 
-        cols_to_merge = ['wb', 'flyash_frac', 'ggbs_frac', 'composite_score', 'norm_co2', 'norm_cost', 'norm_purpose']
-        merge_keys = [k for k in cols_to_merge if k in feasible_df.columns]
-        scores_to_merge = feasible_df[merge_keys]
-        
-        trace_df = trace_df.drop(columns=[k for k in merge_keys if k in trace_df.columns and k not in ['wb', 'flyash_frac', 'ggbs_frac']], errors='ignore')
-        trace_df = trace_df.merge(scores_to_merge, on=['wb', 'flyash_frac', 'ggbs_frac'], how='left')
+    best_meta_series = feasible_candidates_df.loc[best_idx]
 
-    best_df = best_meta.pop('df', pd.DataFrame())
+    # --- 9. Re-hydrate Final Mix & Trace ---
+    if st_progress: st_progress.progress(0.9, text="Generating final mix report...")
+    
+    # Re-create the final mix dict to pass to evaluate_mix
+    # This ensures warnings/formatting are identical to baseline
+    best_mix_dict = {
+        cement_choice: best_meta_series['cement'],
+        "Fly Ash": best_meta_series['flyash'],
+        "GGBS": best_meta_series['ggbs'],
+        "Water": best_meta_series['water_final'],
+        "PCE Superplasticizer": best_meta_series['sp'],
+        "Fine Aggregate": best_meta_series['fine_wet'],
+        "Coarse Aggregate": best_meta_series['coarse_wet']
+    }
+    
+    # Call evaluate_mix ONCE for the final mix to get formatted df and warnings
+    best_df = evaluate_mix(best_mix_dict, emissions, costs)
+    
+    # Prepare metadata dictionary
+    best_meta = best_meta_series.to_dict()
+    best_meta.update({
+        "cementitious": best_meta_series['binder'],
+        "water_target": target_water,
+        "fine": best_meta_series['fine_wet'],
+        "coarse": best_meta_series['coarse_wet'],
+        "grade": grade, "exposure": exposure, "nom_max": nom_max,
+        "slump": target_slump, "binder_range": (min_b_grade, max_b_grade),
+        "material_props": material_props,
+        "purpose_metrics": evaluate_purpose_specific_metrics(best_meta, purpose)
+    })
+    
+    # Prepare trace DataFrame
+    trace_df = grid_df.rename(columns={"w_b": "wb", "cost_total": "cost", "co2_total": "co2"})
+    
+    # Merge composite scores back into the main trace_df for the report
+    score_cols = ['composite_score', 'norm_co2', 'norm_cost', 'norm_purpose']
+    if all(col in feasible_candidates_df.columns for col in score_cols):
+        scores_to_merge = feasible_candidates_df[score_cols]
+        trace_df = trace_df.merge(scores_to_merge, left_index=True, right_index=True, how='left')
+    
     return best_df, best_meta, trace_df.to_dict('records')
 
 def generate_baseline(grade, exposure, nom_max, target_slump, agg_shape, 
@@ -653,7 +901,7 @@ def generate_baseline(grade, exposure, nom_max, target_slump, agg_shape,
     cementitious = min(max(binder_for_wb, min_cem_exp, min_b_grade), max_b_grade)
     actual_wb = water_target / cementitious
     sp = 0.01 * cementitious if use_sp else 0.0
-    coarse_agg_frac = get_coarse_agg_fraction(nom_max, fine_zone, actual_wb)
+    coarse_agg_frac = get_coarse_agg_fraction(nom_max, fine_zone, actual_wb) # Use scalar version
     density_fa, density_ca = material_props['sg_fa'] * 1000, material_props['sg_ca'] * 1000
     
     fine_ssd, coarse_ssd = compute_aggregates(cementitious, water_target, sp, coarse_agg_frac, nom_max, density_fa, density_ca)
@@ -673,7 +921,8 @@ def generate_baseline(grade, exposure, nom_max, target_slump, agg_shape,
         "exposure": exposure, "nom_max": nom_max, "slump": target_slump, 
         "co2_total": float(df["CO2_Emissions (kg/m3)"].sum()),
         "cost_total": float(df["Cost (₹/m3)"].sum()),
-        "coarse_agg_fraction": coarse_agg_frac, "material_props": material_props
+        "coarse_agg_fraction": coarse_agg_frac, "material_props": material_props,
+        "binder_range": (min_b_grade, max_b_grade) # Added for walkthrough
     }
     
     if purpose_profile is None:
@@ -789,7 +1038,7 @@ def display_calculation_walkthrough(meta):
     - **Initial Binder (from w/b):** `{meta['water_target']:.1f} / {meta['w_b']:.3f} = {(meta['water_target']/meta['w_b']):.1f}` kg/m³
     - **Constraints Check:**
         - Min. for `{meta['exposure']}` exposure: `{CONSTANTS.EXPOSURE_MIN_CEMENT[meta['exposure']]}` kg/m³
-        - Typical range for `{meta['grade']}`: `{meta['binder_range'][0]}` - `{meta['binder_range'][1]}` kg/m³
+        - Typical range for `{meta['grade']}`: `{meta['binder_range'][0]}` - `{meta['binder_range'][1]}`
     - **Final Adjusted Binder Content:** **`{meta['cementitious']:.1f}` kg/m³**
 
     #### 5. SCM & Cement Content
@@ -1099,6 +1348,7 @@ def main():
             else:
                 st.info(f"Running single-objective optimization for **{inputs.get('optimize_for', 'CO₂ Emissions')}**.", icon="⚙️")
             
+            progress_bar = st.progress(0.0, text="Initializing optimization...")
             with st.spinner("⚙️ Running IS-code calculations and optimizing..."):
                 fck = CONSTANTS.GRADE_STRENGTH[inputs["grade"]]
                 S = CONSTANTS.QC_STDDEV[inputs.get("qc_level", "Good")]
@@ -1113,8 +1363,11 @@ def main():
                     purpose=purpose, purpose_profile=purpose_profile,
                     purpose_weights=purpose_weights,
                     enable_purpose_optimization=enable_purpose_opt,
+                    st_progress=progress_bar,
                     **calibration_kwargs
                 )
+                
+                if st_progress: progress_bar.progress(0.95, text="Generating baseline comparison...")
                 
                 base_df, base_meta = generate_baseline(
                     inputs["grade"], inputs["exposure"], inputs["nom_max"],
@@ -1124,10 +1377,14 @@ def main():
                     use_sp=inputs["use_sp"], purpose=purpose,
                     purpose_profile=purpose_profile
                 )
+                
+            progress_bar.progress(1.0, text="Optimization complete!")
+            progress_bar.empty()
 
             if opt_df is None or base_df is None:
                 st.error("Could not find a feasible mix design with the given constraints. Try adjusting the parameters, such as a higher grade or less restrictive exposure condition.", icon="❌")
-                st.dataframe(pd.DataFrame(trace))
+                if trace:
+                    st.dataframe(pd.DataFrame(trace))
                 st.session_state.results = {"success": False, "trace": trace}
             else:
                 st.success(f"Successfully generated mix designs for **{inputs['grade']}** concrete in **{inputs['exposure']}** conditions.", icon="✅")
@@ -1147,6 +1404,8 @@ def main():
                 }
         except Exception as e:
             st.error(f"An unexpected error occurred: {e}", icon="💥")
+            import traceback
+            st.exception(traceback.format_exc())
             st.session_state.results = {"success": False, "trace": None}
         finally:
             st.session_state.run_generation = False
@@ -1242,10 +1501,16 @@ def main():
                         c2.metric("🌱 CO₂", f"{best_compromise_mix['co2']:.1f} kg / m³")
                         c3.metric("💧 Water/Binder Ratio", f"{best_compromise_mix['wb']:.3f}")
                         
-                        if 'composite_score' in best_compromise_mix and not pd.isna(best_compromise_mix['composite_score']):
+                        # Find the full mix data from the trace
+                        full_compromise_mix = trace_df[
+                            (trace_df['cost'] == best_compromise_mix['cost']) &
+                            (trace_df['co2'] == best_compromise_mix['co2'])
+                        ].iloc[0]
+
+                        if 'composite_score' in full_compromise_mix and not pd.isna(full_compromise_mix['composite_score']):
                             c4, c5 = st.columns(2)
-                            c4.metric("⚠️ Purpose Penalty", f"{best_compromise_mix['purpose_penalty']:.2f}")
-                            c5.metric("🎯 Composite Score", f"{best_compromise_mix['composite_score']:.3f}")
+                            c4.metric("⚠️ Purpose Penalty", f"{full_compromise_mix['purpose_penalty']:.2f}")
+                            c5.metric("🎯 Composite Score", f"{full_compromise_mix['composite_score']:.3f}")
                     else:
                         st.info("No Pareto front could be determined from the feasible mixes.", icon="ℹ️")
                 else:
