@@ -726,7 +726,12 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape, fine_zone,
     
     # Binder calculations
     grid_df['binder_for_strength'] = target_water / grid_df['wb_input']
-    grid_df['binder'] = np.maximum.reduce([grid_df['binder_for_strength'], min_cem_exp, min_b_grade])
+    
+    # FIX: Broadcast scalars to array shape to prevent ValueError
+    grid_df['binder'] = np.maximum(
+        np.maximum(grid_df['binder_for_strength'], min_cem_exp),
+        min_b_grade
+    )
     grid_df['binder'] = np.minimum(grid_df['binder'], max_b_grade)
     grid_df['w_b'] = target_water / grid_df['binder']
     
@@ -1511,8 +1516,8 @@ def main():
                             c4, c5 = st.columns(2)
                             c4.metric("⚠️ Purpose Penalty", f"{full_compromise_mix['purpose_penalty']:.2f}")
                             c5.metric("🎯 Composite Score", f"{full_compromise_mix['composite_score']:.3f}")
-                    else:
-                        st.info("No Pareto front could be determined from the feasible mixes.", icon="ℹ️")
+                else:
+                    st.info("No Pareto front could be determined from the feasible mixes.", icon="ℹ️")
                 else:
                     st.warning("No feasible mixes were found by the optimizer, so no trade-off plot can be generated.", icon="⚠️")
             else:
