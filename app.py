@@ -769,7 +769,7 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     
     if 'warned_emissions' in st.session_state: st.session_state.warned_emissions.clear()
     if 'warned_costs' in st.session_state: st.session_state.warned_costs.clear()
-           
+            
     if purpose_profile is None: purpose_profile = CONSTANTS.PURPOSE_PROFILES['General']
     if purpose_weights is None: purpose_weights = CONSTANTS.PURPOSE_PROFILES['General']['weights']
 
@@ -1282,6 +1282,8 @@ def run_chat_interface(purpose_profiles_data: dict):
         st.info("Your full mix report is ready. You can ask for refinements or open the full report.")
         if st.button("📊 Open Full Mix Report & Switch to Manual Mode", use_container_width=True, type="primary"):
             st.session_state.chat_mode = False
+            st.session_state.active_tab_name = "📥 **Downloads & Reports**"
+            st.toast("Opening full report...", icon="📊")
             st.rerun()
 
     # --- Handle new user prompt ---
@@ -1575,13 +1577,39 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
         base_df, base_meta = results["base_df"], results["base_meta"]
         trace, inputs = results["trace"], results["inputs"]
         
-        tab1, tab2, tab3, tab_pareto, tab4, tab5, tab6 = st.tabs([
+        # --- START: Tab Controller Fix ---
+        TAB_NAMES = [
             "📊 **Overview**", "🌱 **Optimized Mix**", "🏗️ **Baseline Mix**",
             "⚖️ **Trade-off Explorer**", "📋 **QA/QC & Gradation**",
             "📥 **Downloads & Reports**", "🔬 **Lab Calibration**"
-        ])
+        ]
+        
+        # Ensure session state active tab is valid, else default
+        if st.session_state.active_tab_name not in TAB_NAMES:
+            st.session_state.active_tab_name = TAB_NAMES[0]
 
-        with tab1:
+        # Get the index for the radio button
+        try:
+            default_index = TAB_NAMES.index(st.session_state.active_tab_name)
+        except ValueError:
+            default_index = 0
+            st.session_state.active_tab_name = TAB_NAMES[0]
+
+        # Replace st.tabs with st.radio
+        selected_tab = st.radio(
+            "Mix Report Navigation",
+            options=TAB_NAMES,
+            index=default_index,
+            horizontal=True,
+            label_visibility="collapsed",
+            key="manual_tabs"
+        )
+        
+        # Update the session state variable for next time (e.g., if user clicks)
+        st.session_state.active_tab_name = selected_tab
+        # --- END: Tab Controller Fix ---
+
+        if selected_tab == "📊 **Overview**":
             co2_opt, cost_opt = opt_meta["co2_total"], opt_meta["cost_total"]
             co2_base, cost_base = base_meta["co2_total"], base_meta["cost_total"]
             reduction = (co2_base - co2_opt) / co2_base * 100 if co2_base > 0 else 0.0
@@ -1607,15 +1635,15 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
             _plot_overview_chart(col2, "💵 Material Cost", "Cost (₹/m³)", 
                                  cost_base, cost_opt, ['#D3D3D3', '#2196F3'], '₹{:,.0f}')
 
-        with tab2:
+        elif selected_tab == "🌱 **Optimized Mix**":
             display_mix_details("🌱 Optimized Low-Carbon Mix Design", opt_df, opt_meta, inputs['exposure'])
             if st.toggle("📖 Show Step-by-Step IS Calculation", key="toggle_walkthrough_tab2"):
                 display_calculation_walkthrough(opt_meta)
 
-        with tab3:
+        elif selected_tab == "🏗️ **Baseline Mix**":
             display_mix_details("🏗️ Standard OPC Baseline Mix Design", base_df, base_meta, inputs['exposure'])
 
-        with tab_pareto:
+        elif selected_tab == "⚖️ **Trade-off Explorer**":
             st.header("Cost vs. Carbon Trade-off Analysis")
             st.markdown("This chart displays all IS-code compliant mixes found by the optimizer. The blue line represents the **Pareto Front**—the set of most efficient mixes where you can't improve one objective (e.g., lower CO₂) without worsening the other (e.g., increasing cost).")
 
@@ -1676,7 +1704,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
             else:
                 st.error("Optimizer trace data is missing.", icon="❌")
 
-        with tab4:
+        elif selected_tab == "📋 **QA/QC & Gradation**":
             st.header("Quality Assurance & Sieve Analysis")
             sample_fa_data = "Sieve_mm,PercentPassing\n4.75,95\n2.36,80\n1.18,60\n0.600,40\n0.300,15\n0.150,5"
             sample_ca_data = "Sieve_mm,PercentPassing\n40.0,100\n20.0,98\n10.0,40\n4.75,5"
@@ -1745,7 +1773,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                 else:
                     st.info("Trace not available.")
 
-        with tab5:
+        elif selected_tab == "📥 **Downloads & Reports**":
             st.header("Download Reports")
             excel_buffer = BytesIO()
             with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
@@ -1786,7 +1814,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                 st.download_button("✔️ Optimized Mix (CSV)", data=opt_df.to_csv(index=False).encode("utf-8"), file_name="optimized_mix.csv", mime="text/csv", use_container_width=True)
                 st.download_button("✖️ Baseline Mix (CSV)", data=base_df.to_csv(index=False).encode("utf-8"), file_name="baseline_mix.csv", mime="text/csv", use_container_width=True)
 
-        with tab6:
+        elif selected_tab == "🔬 **Lab Calibration**":
             st.header("🔬 Lab Calibration Analysis")
             lab_csv_to_use = st.session_state.get('lab_csv')
             
@@ -1875,6 +1903,10 @@ def main():
     # --- 1. STATE INITIALIZATION ---
     if "chat_mode" not in st.session_state:
         st.session_state.chat_mode = False
+    
+    if "active_tab_name" not in st.session_state:
+        st.session_state.active_tab_name = "📊 **Overview**"
+        
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
     if "chat_inputs" not in st.session_state:
