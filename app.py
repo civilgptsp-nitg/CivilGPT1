@@ -94,8 +94,10 @@ def _normalize_material_value(s: str) -> str:
         "pce superplasticizer": "pce superplasticizer",
         "pce superplasticiser": "pce superplasticizer",
         "pce": "pce superplasticizer",
+        "opc 33": "opc 33",
         "opc 43": "opc 43",
         "opc 53": "opc 53",
+        "ppc": "ppc",
         "fly ash": "fly ash",
         "ggbs": "ggbs",
         "water": "water",
@@ -306,10 +308,13 @@ def simple_parse(text: str) -> dict:
         if re.search(exp, text, re.IGNORECASE): result["exposure"] = exp; break
     slump_match = re.search(r"slump\s*(?:of\s*)?(\d{2,3})\s*mm", text, re.IGNORECASE)
     if slump_match: result["slump"] = int(slump_match.group(1))
-    cement_types = ["OPC 43"]
+    
+    # Updated list of cement types
+    cement_types = ["OPC 33", "OPC 43", "OPC 53", "PPC"]
     for ctype in cement_types:
         if re.search(ctype.replace(" ", r"\s*"), text, re.IGNORECASE):
             result["cement"] = ctype; break
+            
     nom_match = re.search(r"(\d{2}(\.5)?)\s*mm", text, re.IGNORECASE)
     if nom_match:
         try: result["nom_max"] = float(nom_match.group(1))
@@ -472,7 +477,7 @@ def evaluate_mix(components_dict, emissions_df, costs_df=None):
         emissions_df_norm = emissions_df_norm.drop_duplicates(subset=["Material_norm"])
         
         df = comp_df.merge(emissions_df_norm[["Material_norm","CO2_Factor(kg_CO2_per_kg)"]],
-                            on="Material_norm", how="left")
+                           on="Material_norm", how="left")
         
         missing_rows = df[df["CO2_Factor(kg_CO2_per_kg)"].isna()]
         missing_emissions = [m for m in missing_rows["Material"].tolist() if m and str(m).strip()]
@@ -1089,7 +1094,15 @@ def main():
         exposure = st.sidebar.selectbox("Exposure Condition", list(EXPOSURE_WB_LIMITS.keys()), index=2, help="Determines durability requirements like min. cement content and max. water-binder ratio as per IS 456.")
         st.sidebar.subheader("Workability & Materials")
         target_slump = st.sidebar.slider("Target Slump (mm)", 25, 180, 100, 5, help="Specifies the desired consistency and workability of the fresh concrete.")
-        cement_choice = st.sidebar.selectbox("Cement Type", ["OPC 43"], index=0, help="Type of Ordinary Portland Cement.")
+        
+        # Updated cement_choice selectbox
+        cement_choice = st.sidebar.selectbox(
+            "Cement Type",
+            ["OPC 33", "OPC 43", "OPC 53", "PPC"],
+            index=1,
+            help="Select the type of cement used. Each option has distinct cost and CO₂ emission factors."
+        )
+        
         nom_max = st.sidebar.selectbox("Nominal Max. Aggregate Size (mm)", [10, 12.5, 20, 40], index=2, help="Largest practical aggregate size, influences water demand.")
         agg_shape = st.sidebar.selectbox("Coarse Aggregate Shape", list(AGG_SHAPE_WATER_ADJ.keys()), index=0, help="Shape affects water demand; angular requires more water than rounded.")
         fine_zone = st.sidebar.selectbox("Fine Aggregate Zone (IS 383)", ["Zone I","Zone II","Zone III","Zone IV"], index=1, help="Grading zone as per IS 383. This is crucial for determining aggregate proportions per IS 10262.")
@@ -1235,7 +1248,7 @@ def main():
         "grade": lambda v: st.selectbox("Concrete Grade", list(GRADE_STRENGTH.keys()), index=list(GRADE_STRENGTH.keys()).index(v) if v in GRADE_STRENGTH else 4),
         "exposure": lambda v: st.selectbox("Exposure Condition", list(EXPOSURE_WB_LIMITS.keys()), index=list(EXPOSURE_WB_LIMITS.keys()).index(v) if v in EXPOSURE_WB_LIMITS else 2),
         "target_slump": lambda v: st.slider("Target Slump (mm)", 25, 180, v if isinstance(v, int) else 100, 5),
-        "cement_choice": lambda v: st.selectbox("Cement Type", ["OPC 43"], index=0),
+        "cement_choice": lambda v: st.selectbox("Cement Type", ["OPC 33", "OPC 43", "OPC 53", "PPC"], index=["OPC 33", "OPC 43", "OPC 53", "PPC"].index(v) if v in ["OPC 33", "OPC 43", "OPC 53", "PPC"] else 1),
         "nom_max": lambda v: st.selectbox("Nominal Max. Aggregate Size (mm)", [10, 12.5, 20, 40], index=[10, 12.5, 20, 40].index(v) if v in [10, 12.5, 20, 40] else 2),
     }
 
@@ -1443,9 +1456,9 @@ def main():
             st.markdown("---")
             col1, col2 = st.columns(2)
             _plot_overview_chart(col1, "📊 Embodied Carbon (CO₂e)", "CO₂ (kg/m³)", 
-                                co2_base, co2_opt, ['#D3D3D3', '#4CAF50'], '{:,.1f}')
+                                 co2_base, co2_opt, ['#D3D3D3', '#4CAF50'], '{:,.1f}')
             _plot_overview_chart(col2, "💵 Material Cost", "Cost (₹/m³)", 
-                                cost_base, cost_opt, ['#D3D3D3', '#2196F3'], '₹{:,.0f}')
+                                 cost_base, cost_opt, ['#D3D3D3', '#2196F3'], '₹{:,.0f}')
 
         with tab2:
             display_mix_details("🌱 Optimized Low-Carbon Mix Design", opt_df, opt_meta, inputs['exposure'])
