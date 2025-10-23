@@ -691,7 +691,7 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape, fine_zone,
     # Clear session state warnings for this run
     if 'warned_emissions' in st.session_state: st.session_state.warned_emissions.clear()
     if 'warned_costs' in st.session_state: st.session_state.warned_costs.clear()
-        
+         
     if purpose_profile is None: purpose_profile = CONSTANTS.PURPOSE_PROFILES['General']
     if purpose_weights is None: purpose_weights = CONSTANTS.PURPOSE_PROFILES['General']['weights']
 
@@ -1283,17 +1283,25 @@ def main():
             required_fields = ["grade", "exposure", "target_slump", "nom_max", "cement_choice"]
             missing_fields = [f for f in required_fields if inputs.get(f) is None]
 
+            # --- START: SYNTAX ERROR FIX ---
             if missing_fields:
                 st.session_state.clarification_needed = True
                 st.session_state.final_inputs = inputs
                 st.session_state.missing_fields = missing_fields
                 st.session_state.run_generation = False
             else:
+                # This 'else' belongs to 'if missing_fields:'
+                # It means fields were *not* missing, so we can run.
                 st.session_state.run_generation = True
                 st.session_state.final_inputs = inputs
+        
         else:
+            # This 'else' belongs to 'if user_text.strip() and not manual_mode:'
+            # It means we are in manual mode (or prompt is empty), so we can run.
             st.session_state.run_generation = True
             st.session_state.final_inputs = inputs
+            # --- END: SYNTAX ERROR FIX ---
+
 
     if st.session_state.get('clarification_needed', False):
         st.markdown("---")
@@ -1516,8 +1524,8 @@ def main():
                             c4, c5 = st.columns(2)
                             c4.metric("⚠️ Purpose Penalty", f"{full_compromise_mix['purpose_penalty']:.2f}")
                             c5.metric("🎯 Composite Score", f"{full_compromise_mix['composite_score']:.3f}")
-                else:
-                    st.info("No Pareto front could be determined from the feasible mixes.", icon="ℹ️")
+                    else:
+                        st.info("No Pareto front could be determined from the feasible mixes.", icon="ℹ️")
                 else:
                     st.warning("No feasible mixes were found by the optimizer, so no trade-off plot can be generated.", icon="⚠️")
             else:
