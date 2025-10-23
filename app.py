@@ -1,5 +1,3 @@
-# app.py - CivilGPT (Compressed)
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -474,7 +472,7 @@ def evaluate_mix(components_dict, emissions_df, costs_df=None):
         emissions_df_norm = emissions_df_norm.drop_duplicates(subset=["Material_norm"])
         
         df = comp_df.merge(emissions_df_norm[["Material_norm","CO2_Factor(kg_CO2_per_kg)"]],
-                           on="Material_norm", how="left")
+                            on="Material_norm", how="left")
         
         missing_rows = df[df["CO2_Factor(kg_CO2_per_kg)"].isna()]
         missing_emissions = [m for m in missing_rows["Material"].tolist() if m and str(m).strip()]
@@ -892,7 +890,7 @@ def generate_baseline(grade, exposure, nom_max, target_slump, agg_shape,
     
     return df, meta
 
-def apply_parser(user_text, current_inputs):
+def apply_parser(user_text, current_inputs, use_llm_parser=False):
     if not user_text.strip():
         return current_inputs, [], {}
     try:
@@ -1261,7 +1259,7 @@ def main():
 
         if user_text.strip() and not manual_mode:
             with st.spinner("🤖 Parsing your request..."):
-                inputs, msgs, _ = apply_parser(user_text, inputs)
+                inputs, msgs, _ = apply_parser(user_text, inputs, use_llm_parser=use_llm_parser)
             if msgs:
                 st.info(" ".join(msgs), icon="💡")
             
@@ -1445,9 +1443,9 @@ def main():
             st.markdown("---")
             col1, col2 = st.columns(2)
             _plot_overview_chart(col1, "📊 Embodied Carbon (CO₂e)", "CO₂ (kg/m³)", 
-                                 co2_base, co2_opt, ['#D3D3D3', '#4CAF50'], '{:,.1f}')
+                                co2_base, co2_opt, ['#D3D3D3', '#4CAF50'], '{:,.1f}')
             _plot_overview_chart(col2, "💵 Material Cost", "Cost (₹/m³)", 
-                                 cost_base, cost_opt, ['#D3D3D3', '#2196F3'], '₹{:,.0f}')
+                                cost_base, cost_opt, ['#D3D3D3', '#2196F3'], '₹{:,.0f}')
 
         with tab2:
             display_mix_details("🌱 Optimized Low-Carbon Mix Design", opt_df, opt_meta, inputs['exposure'])
