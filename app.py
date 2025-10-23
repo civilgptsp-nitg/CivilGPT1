@@ -50,7 +50,7 @@ class CONSTANTS:
         "Zone IV":  {"10.0": (95,100),"4.75": (95,100),"2.36": (95,100),"1.18": (90,100),"0.600": (80,100),"0.300": (15,50),"0.150": (0,15)},
     }
     COARSE_LIMITS = {
-        10: {"20.0": (100,100), "10.0": (85,100),        "4.75": (0,20)},
+        10: {"20.0": (100,100), "10.0": (85,100),       "4.75": (0,20)},
         20: {"40.0": (95,100),  "20.0": (95,100),  "10.0": (25,55), "4.75": (0,10)},
         40: {"80.0": (95,100),  "40.0": (95,100),  "20.0": (30,70), "10.0": (0,15)}
     }
@@ -769,7 +769,7 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     
     if 'warned_emissions' in st.session_state: st.session_state.warned_emissions.clear()
     if 'warned_costs' in st.session_state: st.session_state.warned_costs.clear()
-            
+                 
     if purpose_profile is None: purpose_profile = CONSTANTS.PURPOSE_PROFILES['General']
     if purpose_weights is None: purpose_weights = CONSTANTS.PURPOSE_PROFILES['General']['weights']
 
@@ -1117,17 +1117,17 @@ def display_calculation_walkthrough(meta):
     #### 4. Binder Content
     - **Initial Binder (from w/b):** `{meta['water_target']:.1f} / {meta['w_b']:.3f} = {(meta['water_target']/meta['w_b']):.1f}` kg/m³
     - **Constraints Check:**
-          - Min. for `{meta['exposure']}` exposure: `{CONSTANTS.EXPOSURE_MIN_CEMENT[meta['exposure']]}` kg/m³
-          - Typical range for `{meta['grade']}`: `{meta['binder_range'][0]}` - `{meta['binder_range'][1]}`
+            - Min. for `{meta['exposure']}` exposure: `{CONSTANTS.EXPOSURE_MIN_CEMENT[meta['exposure']]}` kg/m³
+            - Typical range for `{meta['grade']}`: `{meta['binder_range'][0]}` - `{meta['binder_range'][1]}`
     - **Final Adjusted Binder Content:** **`{meta['cementitious']:.1f}` kg/m³**
 
     #### 5. SCM & Cement Content
     - **Optimizer Goal:** Minimize CO₂/cost by replacing cement with SCMs (Fly Ash, GGBS).
     - **Selected SCM Fraction:** `{meta['scm_total_frac']*100:.0f}%`
     - **Material Quantities:**
-          - **Cement:** `{meta['cement']:.1f}` kg/m³
-          - **Fly Ash:** `{meta['flyash']:.1f}` kg/m³
-          - **GGBS:** `{meta['ggbs']:.1f}` kg/m³
+            - **Cement:** `{meta['cement']:.1f}` kg/m³
+            - **Fly Ash:** `{meta['flyash']:.1f}` kg/m³
+            - **GGBS:** `{meta['ggbs']:.1f}` kg/m³
 
     #### 6. Aggregate Proportioning (IS 10262, Table 5)
     - **Basis:** Volume of coarse aggregate for `{meta['nom_max']}` mm aggregate and fine aggregate `{meta.get('fine_zone', 'Zone II')}`.
@@ -1139,9 +1139,9 @@ def display_calculation_walkthrough(meta):
     - **Coarse Aggregate (SSD):** `{(meta['coarse'] / (1 + meta['material_props']['moisture_ca']/100)):.1f}` kg/m³
     - **Moisture Correction:** Adjusted for `{meta['material_props']['moisture_fa']}%` free moisture in fine and `{meta['material_props']['moisture_ca']}%` in coarse aggregate.
     - **Final Batch Weights:**
-          - **Water:** **`{meta['water_final']:.1f}` kg/m³**
-          - **Fine Aggregate:** **`{meta['fine']:.1f}` kg/m³**
-          - **Coarse Aggregate:** **`{meta['coarse']:.1f}` kg/m³**
+            - **Water:** **`{meta['water_final']:.1f}` kg/m³**
+            - **Fine Aggregate:** **`{meta['fine']:.1f}` kg/m³**
+            - **Coarse Aggregate:** **`{meta['coarse']:.1f}` kg/m³**
     """)
 
 # ==============================================================================
@@ -1633,9 +1633,9 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
             st.markdown("---")
             col1, col2 = st.columns(2)
             _plot_overview_chart(col1, "📊 Embodied Carbon (CO₂e)", "CO₂ (kg/m³)", 
-                                 co2_base, co2_opt, ['#D3D3D3', '#4CAF50'], '{:,.1f}')
+                                co2_base, co2_opt, ['#D3D3D3', '#4CAF50'], '{:,.1f}')
             _plot_overview_chart(col2, "💵 Material Cost", "Cost (₹/m³)", 
-                                 cost_base, cost_opt, ['#D3D3D3', '#2196F3'], '₹{:,.0f}')
+                                cost_base, cost_opt, ['#D3D3D3', '#2196F3'], '₹{:,.0f}')
 
         elif selected_tab == "🌱 **Optimized Mix**":
             display_mix_details("🌱 Optimized Low-Carbon Mix Design", opt_df, opt_meta, inputs['exposure'])
@@ -1699,8 +1699,8 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                             c4, c5 = st.columns(2)
                             c4.metric("⚠️ Purpose Penalty", f"{full_compromise_mix['purpose_penalty']:.2f}")
                             c5.metric("🎯 Composite Score", f"{full_compromise_mix['composite_score']:.3f}")
-                    else:
-                        st.info("No Pareto front could be determined from the feasible mixes.", icon="ℹ️")
+                else:
+                    st.info("No Pareto front could be determined from the feasible mixes.", icon="ℹ️")
                 else:
                     st.warning("No feasible mixes were found by the optimizer, so no trade-off plot can be generated.", icon="⚠️")
             else:
@@ -1708,6 +1708,13 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
 
         elif selected_tab == "📋 **QA/QC & Gradation**":
             st.header("Quality Assurance & Sieve Analysis")
+
+            with st.expander("📂 Material Libraries (Upload Data)"):
+                st.info("Upload your custom CSV files here. These will override the app's default values and persist across modes.", icon="ℹ️")
+                emissions_file = st.file_uploader("Emission Factors (kgCO₂/kg)", type=["csv"], key="emissions_csv")
+                cost_file = st.file_uploader("Cost Factors (₹/kg)", type=["csv"], key="cost_csv")
+                materials_file = st.file_uploader("Upload Materials Library CSV", type=["csv"], key="materials_csv")
+
             sample_fa_data = "Sieve_mm,PercentPassing\n4.75,95\n2.36,80\n1.18,60\n0.600,40\n0.300,15\n0.150,5"
             sample_ca_data = "Sieve_mm,PercentPassing\n40.0,100\n20.0,98\n10.0,40\n4.75,5"
             
@@ -1949,12 +1956,12 @@ def main():
             st.rerun()
         st.sidebar.markdown("---")
 
-    st.sidebar.header("📁 Material Libraries (Shared)")
-    st.sidebar.info("Upload libraries here. They will be used by both chat and manual modes.")
-    with st.sidebar.expander("Upload Materials, Cost, & Emissions CSVs"):
-        materials_file = st.file_uploader("Upload Materials Library CSV", type=["csv"], key="materials_csv")
-        emissions_file = st.file_uploader("Emission Factors (kgCO₂/kg)", type=["csv"], key="emissions_csv")
-        cost_file = st.file_uploader("Cost Factors (₹/kg)", type=["csv"], key="cost_csv")
+    # --- REMOVED: Material Libraries (Shared) section ---
+    # Load data from file uploaders (which are now in the QA/QC tab)
+    # We access them via their session state keys
+    materials_file = st.session_state.get("materials_csv")
+    emissions_file = st.session_state.get("emissions_csv")
+    cost_file = st.session_state.get("cost_csv")
 
     materials_df, emissions_df, costs_df = load_data(materials_file, emissions_file, cost_file)
 
