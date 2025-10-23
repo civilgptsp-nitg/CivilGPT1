@@ -97,24 +97,31 @@ class CONSTANTS:
 # PART 2: CACHED LOADERS & BACKEND LOGIC
 # ==============================================================================
 
-@st.cache_resource
-def get_groq_client():
-    """Initializes and returns the Groq client, caching the resource."""
-    try:
-        from groq import Groq
-        api_key = st.secrets.get("GROQ_API_KEY", None)
-        if not api_key:
-            st.error("`GROQ_API_KEY` not found in Streamlit Secrets. Please add it to enable LLM features.", icon="🚨")
-            return None
-        return Groq(api_key=api_key)
-    except ImportError:
-        st.error("Groq library not installed. `pip install groq`", icon="🚨")
-        return None
-    except Exception as e:
-        st.error(f"Failed to initialize Groq client: {e}", icon="🚨")
-        return None
-
-client = get_groq_client()
+# --- LLM Client Initialization (Robust & Failsafe) ---
+client = None
+try:
+    from groq import Groq
+    # Check environment variables (local) and Streamlit secrets (cloud)
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY", None)
+    
+    if GROQ_API_KEY:
+        client = Groq(api_key=GROQ_API_KEY)
+        st.session_state["llm_enabled"] = True
+        # Store message to be displayed inside main()
+        st.session_state["llm_init_message"] = ("success", "✅ LLM features enabled via Groq API.")
+    else:
+        client = None
+        st.session_state["llm_enabled"] = False
+        st.session_state["llm_init_message"] = ("info", "ℹ️ LLM parser disabled (no API key found). Using regex-based fallback.")
+except ImportError:
+    client = None
+    st.session_state["llm_enabled"] = False
+    st.session_state["llm_init_message"] = ("warning", "⚠️ Groq library not found. `pip install groq`. Falling back to regex parser.")
+except Exception as e:
+    client = None
+    st.session_state["llm_enabled"] = False
+    st.session_state["llm_init_message"] = ("warning", f"⚠️ LLM initialization failed: {e}. Falling back to regex parser.")
+# --- End of LLM Initialization ---
 
 @st.cache_data
 def load_default_excel(file_name):
@@ -423,8 +430,9 @@ def parse_user_prompt_llm(prompt_text: str) -> dict:
     Sends user prompt to LLM and returns structured parameter JSON.
     Must gracefully handle parsing errors or malformed responses.
     """
-    if client is None:
-        st.warning("Groq client not initialized. Falling back to simple regex parser.")
+    # Check the session state flag set during initialization
+    if not st.session_state.get("llm_enabled", False) or client is None:
+        # No st.warning here, as the info message was already shown on load
         return simple_parse(prompt_text)
 
     system_prompt = f"""
@@ -759,7 +767,7 @@ def _get_material_factors(materials_list, emissions_df, costs_df):
     return final_co2, final_cost
 
 def generate_mix(grade, exposure, nom_max, target_slump, agg_shape, 
-                 fine_zone,  
+                 fine_zone, 
                  emissions, costs, cement_choice, material_props, 
                  use_sp=True, sp_reduction=0.18, optimize_cost=False, 
                  wb_min=0.35, wb_steps=6, max_flyash_frac=0.3, max_ggbs_frac=0.5, 
@@ -1145,17 +1153,17 @@ def display_calculation_walkthrough(meta):
     #### 4. Binder Content
     - **Initial Binder (from w/b):** `{meta['water_target']:.1f} / {meta['w_b']:.3f} = {(meta['water_target']/meta['w_b']):.1f}` kg/m³
     - **Constraints Check:**
-         - Min. for `{meta['exposure']}` exposure: `{CONSTANTS.EXPOSURE_MIN_CEMENT[meta['exposure']]}` kg/m³
-         - Typical range for `{meta['grade']}`: `{meta['binder_range'][0]}` - `{meta['binder_range'][1]}`
+          - Min. for `{meta['exposure']}` exposure: `{CONSTANTS.EXPOSURE_MIN_CEMENT[meta['exposure']]}` kg/m³
+          - Typical range for `{meta['grade']}`: `{meta['binder_range'][0]}` - `{meta['binder_range'][1]}`
     - **Final Adjusted Binder Content:** **`{meta['cementitious']:.1f}` kg/m³**
 
     #### 5. SCM & Cement Content
     - **Optimizer Goal:** Minimize CO₂/cost by replacing cement with SCMs (Fly Ash, GGBS).
     - **Selected SCM Fraction:** `{meta['scm_total_frac']*100:.0f}%`
     - **Material Quantities:**
-         - **Cement:** `{meta['cement']:.1f}` kg/m³
-         - **Fly Ash:** `{meta['flyash']:.1f}` kg/m³
-         - **GGBS:** `{meta['ggbs']:.1f}` kg/m³
+          - **Cement:** `{meta['cement']:.1f}` kg/m³
+          - **Fly Ash:** `{meta['flyash']:.1f}` kg/m³
+          - **GGBS:** `{meta['ggbs']:.1f}` kg/m³
 
     #### 6. Aggregate Proportioning (IS 10262, Table 5)
     - **Basis:** Volume of coarse aggregate for `{meta['nom_max']}` mm aggregate and fine aggregate `{meta.get('fine_zone', 'Zone II')}`.
@@ -1167,9 +1175,9 @@ def display_calculation_walkthrough(meta):
     - **Coarse Aggregate (SSD):** `{(meta['coarse'] / (1 + meta['material_props']['moisture_ca']/100)):.1f}` kg/m³
     - **Moisture Correction:** Adjusted for `{meta['material_props']['moisture_fa']}%` free moisture in fine and `{meta['material_props']['moisture_ca']}%` in coarse aggregate.
     - **Final Batch Weights:**
-         - **Water:** **`{meta['water_final']:.1f}` kg/m³**
-         - **Fine Aggregate:** **`{meta['fine']:.1f}` kg/m³**
-         - **Coarse Aggregate:** **`{meta['coarse']:.1f}` kg/m³**
+          - **Water:** **`{meta['water_final']:.1f}` kg/m³**
+          - **Fine Aggregate:** **`{meta['fine']:.1f}` kg/m³**
+          - **Coarse Aggregate:** **`{meta['coarse']:.1f}` kg/m³**
     """)
 
 
@@ -1481,7 +1489,13 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
             calib_scm_step = st.slider("SCM fraction step (scm_step)", 0.05, 0.25, 0.10, 0.05, help="Step size for testing different SCM replacement percentages.")
         
         st.sidebar.markdown("---")
-        use_llm_parser = st.sidebar.checkbox("Use Groq LLM Parser", value=False, help="Use a Large Language Model for parsing the text prompt. Requires API key.")
+        llm_is_ready = st.session_state.get("llm_enabled", False)
+        use_llm_parser = st.sidebar.checkbox(
+            "Use Groq LLM Parser", 
+            value=False, 
+            help="Use a Large Language Model for parsing the text prompt." if llm_is_ready else "LLM Parser is disabled. Add a GROQ_API_KEY to enable.",
+            disabled=not llm_is_ready
+        )
 
     else: # Default values when manual mode is off
         grade, exposure, cement_choice = "M30", "Severe", "OPC 43"
@@ -1633,9 +1647,9 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
             st.markdown("---")
             col1, col2 = st.columns(2)
             _plot_overview_chart(col1, "📊 Embodied Carbon (CO₂e)", "CO₂ (kg/m³)", 
-                                 co2_base, co2_opt, ['#D3D3D3', '#4CAF50'], '{:,.1f}')
+                                co2_base, co2_opt, ['#D3D3D3', '#4CAF50'], '{:,.1f}')
             _plot_overview_chart(col2, "💵 Material Cost", "Cost (₹/m³)", 
-                                 cost_base, cost_opt, ['#D3D3D3', '#2196F3'], '₹{:,.0f}')
+                                cost_base, cost_opt, ['#D3D3D3', '#2196F3'], '₹{:,.0f}')
 
         with tab2:
             display_mix_details("🌱 Optimized Low-Carbon Mix Design", opt_df, opt_meta, inputs['exposure'])
@@ -1921,11 +1935,24 @@ def main():
 
     # --- 2. SIDEBAR SETUP (COMMON ELEMENTS) ---
     st.sidebar.title("Mode Selection")
+
+    # --- Display LLM Initialization Message (from global scope) ---
+    if "llm_init_message" in st.session_state:
+        msg_type, msg_content = st.session_state.pop("llm_init_message")
+        if msg_type == "success":
+            st.sidebar.success(msg_content, icon="🤖")
+        elif msg_type == "info":
+            st.sidebar.info(msg_content, icon="ℹ️")
+        elif msg_type == "warning":
+            st.sidebar.warning(msg_content, icon="⚠️")
+
+    llm_is_ready = st.session_state.get("llm_enabled", False)
     chat_mode = st.sidebar.toggle(
         "💬 Switch to CivilGPT Chat Mode", 
-        value=st.session_state.chat_mode, 
+        value=st.session_state.chat_mode if llm_is_ready else False, # Force false if LLM disabled
         key="chat_mode_toggle",
-        help="Toggle to use a conversational interface to design your mix."
+        help="Toggle to use a conversational interface." if llm_is_ready else "Chat Mode requires a valid GROQ_API_KEY.",
+        disabled=not llm_is_ready
     )
     st.session_state.chat_mode = chat_mode # Store state
 
