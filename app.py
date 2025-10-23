@@ -1283,7 +1283,6 @@ def main():
             required_fields = ["grade", "exposure", "target_slump", "nom_max", "cement_choice"]
             missing_fields = [f for f in required_fields if inputs.get(f) is None]
 
-            # --- START: SYNTAX ERROR FIX ---
             if missing_fields:
                 st.session_state.clarification_needed = True
                 st.session_state.final_inputs = inputs
@@ -1300,7 +1299,6 @@ def main():
             # It means we are in manual mode (or prompt is empty), so we can run.
             st.session_state.run_generation = True
             st.session_state.final_inputs = inputs
-            # --- END: SYNTAX ERROR FIX ---
 
 
     if st.session_state.get('clarification_needed', False):
@@ -1380,7 +1378,10 @@ def main():
                     **calibration_kwargs
                 )
                 
-                if st_progress: progress_bar.progress(0.95, text="Generating baseline comparison...")
+                # --- START: SYNTAX ERROR FIX ---
+                # The variable here is 'progress_bar', not 'st_progress'
+                if progress_bar: progress_bar.progress(0.95, text="Generating baseline comparison...")
+                # --- END: SYNTAX ERROR FIX ---
                 
                 base_df, base_meta = generate_baseline(
                     inputs["grade"], inputs["exposure"], inputs["nom_max"],
