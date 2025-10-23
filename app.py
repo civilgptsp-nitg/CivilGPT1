@@ -1708,13 +1708,6 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
 
         elif selected_tab == "📋 **QA/QC & Gradation**":
             st.header("Quality Assurance & Sieve Analysis")
-
-            with st.expander("📂 Material Libraries (Upload Data)"):
-                st.info("Upload your custom CSV files here. These will override the app's default values and persist across modes.", icon="ℹ️")
-                emissions_file = st.file_uploader("Emission Factors (kgCO₂/kg)", type=["csv"], key="emissions_csv")
-                cost_file = st.file_uploader("Cost Factors (₹/kg)", type=["csv"], key="cost_csv")
-                materials_file = st.file_uploader("Upload Materials Library CSV", type=["csv"], key="materials_csv")
-
             sample_fa_data = "Sieve_mm,PercentPassing\n4.75,95\n2.36,80\n1.18,60\n0.600,40\n0.300,15\n0.150,5"
             sample_ca_data = "Sieve_mm,PercentPassing\n40.0,100\n20.0,98\n10.0,40\n4.75,5"
             
@@ -1956,12 +1949,13 @@ def main():
             st.rerun()
         st.sidebar.markdown("---")
 
-    # --- REMOVED: Material Libraries (Shared) section ---
-    # Load data from file uploaders (which are now in the QA/QC tab)
-    # We access them via their session state keys
-    materials_file = st.session_state.get("materials_csv")
-    emissions_file = st.session_state.get("emissions_csv")
-    cost_file = st.session_state.get("cost_csv")
+    # --- RE-ADDED: Material Libraries (Shared) section ---
+    st.sidebar.header("📁 Material Libraries (Shared)")
+    st.sidebar.info("Upload libraries here. They will be used by both chat and manual modes.")
+    with st.sidebar.expander("Upload Materials, Cost, & Emissions CSVs"):
+        materials_file = st.file_uploader("Upload Materials Library CSV", type=["csv"], key="materials_csv")
+        emissions_file = st.file_uploader("Emission Factors (kgCO₂/kg)", type=["csv"], key="emissions_csv")
+        cost_file = st.file_uploader("Cost Factors (₹/kg)", type=["csv"], key="cost_csv")
 
     materials_df, emissions_df, costs_df = load_data(materials_file, emissions_file, cost_file)
 
