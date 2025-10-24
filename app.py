@@ -1281,11 +1281,22 @@ def run_chat_interface(purpose_profiles_data: dict):
     # --- Show "Open Report" button if results are ready ---
     if st.session_state.get("chat_results_displayed", False):
         st.info("Your full mix report is ready. You can ask for refinements or open the full report.")
-        if st.button("📊 Open Full Mix Report & Switch to Manual Mode", use_container_width=True, type="primary"):
+
+        # === START OF FIX ===
+        def switch_to_manual_mode():
             st.session_state.chat_mode = False
-            st.session_state.active_tab_name = "📥 **Downloads & Reports**"
-            st.toast("Opening full report...", icon="📊")
-            st.rerun()
+            # Set the active tab name to the Overview tab for immediate focus
+            st.session_state.active_tab_name = "📊 **Overview**" 
+            st.toast("Switching to Manual Mode...", icon="📊")
+
+        st.button(
+            "📊 Open Full Mix Report & Switch to Manual Mode", 
+            use_container_width=True, 
+            type="primary",
+            on_click=switch_to_manual_mode, # Execute state update before natural rerun
+            key="switch_to_manual_btn"
+        )
+        # === END OF FIX ===
 
     # --- Handle new user prompt ---
     if user_prompt := st.chat_input("Ask CivilGPT anything about your concrete mix..."):
