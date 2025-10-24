@@ -1344,35 +1344,36 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
         st.subheader("Core Mix Requirements")
         c1, c2, c3, c4 = st.columns(4)
         with c1:
-            grade = st.selectbox("Concrete Grade", list(CONSTANTS.GRADE_STRENGTH.keys()), index=4, help="Target characteristic compressive strength at 28 days.")
+            grade = st.selectbox("Concrete Grade", list(CONSTANTS.GRADE_STRENGTH.keys()), index=4, help="Target characteristic compressive strength at 28 days.", key="grade")
         with c2:
-            exposure = st.selectbox("Exposure Condition", list(CONSTANTS.EXPOSURE_WB_LIMITS.keys()), index=2, help="Determines durability requirements like min. cement content and max. water-binder ratio as per IS 456.")
+            exposure = st.selectbox("Exposure Condition", list(CONSTANTS.EXPOSURE_WB_LIMITS.keys()), index=2, help="Determines durability requirements like min. cement content and max. water-binder ratio as per IS 456.", key="exposure")
         with c3:
-            target_slump = st.slider("Target Slump (mm)", 25, 180, 100, 5, help="Specifies the desired consistency and workability of the fresh concrete.")
+            target_slump = st.slider("Target Slump (mm)", 25, 180, 100, 5, help="Specifies the desired consistency and workability of the fresh concrete.", key="target_slump")
         with c4:
             cement_choice = st.selectbox(
                 "Cement Type",
                 CONSTANTS.CEMENT_TYPES, index=1,
-                help="Select the type of cement used. Each option has distinct cost and CO₂ emission factors."
+                help="Select the type of cement used. Each option has distinct cost and CO₂ emission factors.",
+                key="cement_choice"
             )
         
         st.markdown("---")
         st.subheader("Aggregate Properties & Geometry")
         a1, a2, a3 = st.columns(3)
         with a1:
-            nom_max = st.selectbox("Nominal Max. Aggregate Size (mm)", [10, 12.5, 20, 40], index=2, help="Largest practical aggregate size, influences water demand.")
+            nom_max = st.selectbox("Nominal Max. Aggregate Size (mm)", [10, 12.5, 20, 40], index=2, help="Largest practical aggregate size, influences water demand.", key="nom_max")
         with a2:
-            agg_shape = st.selectbox("Coarse Aggregate Shape", list(CONSTANTS.AGG_SHAPE_WATER_ADJ.keys()), index=0, help="Shape affects water demand; angular requires more water than rounded.")
+            agg_shape = st.selectbox("Coarse Aggregate Shape", list(CONSTANTS.AGG_SHAPE_WATER_ADJ.keys()), index=0, help="Shape affects water demand; angular requires more water than rounded.", key="agg_shape")
         with a3:
-            fine_zone = st.selectbox("Fine Aggregate Zone (IS 383)", ["Zone I","Zone II","Zone III","Zone IV"], index=1, help="Grading zone as per IS 383. This is crucial for determining aggregate proportions per IS 10262.")
+            fine_zone = st.selectbox("Fine Aggregate Zone (IS 383)", ["Zone I","Zone II","Zone III","Zone IV"], index=1, help="Grading zone as per IS 383. This is crucial for determining aggregate proportions per IS 10262.", key="fine_zone")
         
         st.markdown("---")
         st.subheader("Admixtures & Quality Control")
         d1, d2 = st.columns(2)
         with d1:
-            use_sp = st.checkbox("Use Superplasticizer (PCE)", True, help="Chemical admixture to increase workability or reduce water content.")
+            use_sp = st.checkbox("Use Superplasticizer (PCE)", True, help="Chemical admixture to increase workability or reduce water content.", key="use_sp")
         with d2:
-            qc_level = st.selectbox("Quality Control Level", list(CONSTANTS.QC_STDDEV.keys()), index=0, help="Assumed site quality control, affecting the target strength calculation (f_target = fck + 1.65 * S).")
+            qc_level = st.selectbox("Quality Control Level", list(CONSTANTS.QC_STDDEV.keys()), index=0, help="Assumed site quality control, affecting the target strength calculation (f_target = fck + 1.65 * S).", key="qc_level")
 
         st.markdown("---")
         st.subheader("Optimization Settings")
@@ -1405,6 +1406,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                 w_cost = st.slider("💰 Cost Weight", 0.0, 1.0, default_weights['cost'], 0.05, key="w_cost")
                 w_purpose = st.slider("🛠️ Purpose-Fit Weight", 0.0, 1.0, default_weights['purpose'], 0.05, key="w_purpose")
                 
+                # Safe calculation for normalized weights
                 total_w = w_co2 + w_cost + w_purpose
                 if total_w == 0:
                     st.warning("Weights cannot all be zero. Defaulting to balanced weights.")
@@ -1413,8 +1415,8 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                     purpose_weights = {"w_co2": w_co2 / total_w, "w_cost": w_cost / total_w, "w_purpose": w_purpose / total_w}
                     st.caption(f"Normalized: CO₂ {purpose_weights['w_co2']:.1%}, Cost {purpose_weights['w_cost']:.1%}, Purpose {purpose_weights['w_purpose']:.1%}")
         elif enable_purpose_optimization and purpose == 'General':
-             st.info("Purpose 'General' uses single-objective optimization (CO₂ or Cost).")
-             enable_purpose_optimization = False
+              st.info("Purpose 'General' uses single-objective optimization (CO₂ or Cost).")
+              enable_purpose_optimization = False
 
         st.markdown("---")
         # --- 2b. MATERIAL PROPERTIES (MOVED FROM SIDEBAR) ---
@@ -1464,67 +1466,66 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
         st.markdown("---")
         # --- 2c. CALIBRATION & TUNING ---
         with st.expander("Calibration & Tuning (Developer)", expanded=False):
-            enable_calibration_overrides = st.checkbox("Enable calibration overrides", False, help="Override default optimizer search parameters with the values below.")
+            enable_calibration_overrides = st.checkbox("Enable calibration overrides", False, key="enable_calibration_overrides", help="Override default optimizer search parameters with the values below.")
             c1, c2 = st.columns(2)
             with c1:
-                calib_wb_min = st.number_input("W/B search minimum (wb_min)", 0.30, 0.45, 0.35, 0.01, help="Lower bound for the Water/Binder ratio search space.")
-                calib_wb_steps = st.slider("W/B search steps (wb_steps)", 3, 15, 6, 1, help="Number of W/B ratios to test between min and the exposure limit.")
-                calib_fine_fraction = st.slider("Fine Aggregate Fraction (fine_fraction) Override", 0.30, 0.50, 0.40, 0.01, help="Manually overrides the IS 10262 calculation for aggregate proportions (set to 0 to disable).")
+                calib_wb_min = st.number_input("W/B search minimum (wb_min)", 0.30, 0.45, 0.35, 0.01, key="calib_wb_min", help="Lower bound for the Water/Binder ratio search space.")
+                calib_wb_steps = st.slider("W/B search steps (wb_steps)", 3, 15, 6, 1, key="calib_wb_steps", help="Number of W/B ratios to test between min and the exposure limit.")
+                calib_fine_fraction = st.slider("Fine Aggregate Fraction (fine_fraction) Override", 0.30, 0.50, 0.40, 0.01, key="calib_fine_fraction", help="Manually overrides the IS 10262 calculation for aggregate proportions (set to 0 to disable).")
             with c2:
-                calib_max_flyash_frac = st.slider("Max Fly Ash fraction", 0.0, 0.5, 0.30, 0.05, help="Maximum Fly Ash replacement percentage to test.")
-                calib_max_ggbs_frac = st.slider("Max GGBS fraction", 0.0, 0.5, 0.50, 0.05, help="Maximum GGBS replacement percentage to test.")
-                calib_scm_step = st.slider("SCM fraction step (scm_step)", 0.05, 0.25, 0.10, 0.05, help="Step size for testing different SCM replacement percentages.")
+                calib_max_flyash_frac = st.slider("Max Fly Ash fraction", 0.0, 0.5, 0.30, 0.05, key="calib_max_flyash_frac", help="Maximum Fly Ash replacement percentage to test.")
+                calib_max_ggbs_frac = st.slider("Max GGBS fraction", 0.0, 0.5, 0.50, 0.05, key="calib_max_ggbs_frac", help="Maximum GGBS replacement percentage to test.")
+                calib_scm_step = st.slider("SCM fraction step (scm_step)", 0.05, 0.25, 0.10, 0.05, key="calib_scm_step", help="Step size for testing different SCM replacement percentages.")
         
-        # Determine overrides based on expander state
-        if not enable_calibration_overrides:
-             calib_wb_min, calib_wb_steps = 0.35, 6
-             calib_max_flyash_frac, calib_max_ggbs_frac, calib_scm_step = 0.3, 0.5, 0.1
-             calib_fine_fraction = None
+        # Determine overrides based on expander state (will be re-calculated safely below)
     
     # --- 3. INPUT PARSING AND GENERATION LOGIC ---
-    # Default values when Advanced Input is collapsed
-    if not 'sg_fa_manual' in st.session_state: 
-        grade, exposure, cement_choice = "M30", "Severe", "OPC 43"
-        nom_max, agg_shape, target_slump = 20, "Angular (baseline)", 125
-        use_sp, optimize_cost, fine_zone = True, False, "Zone II"
-        optimize_for = "CO₂ Emissions"
-        qc_level = "Good"
-        sg_fa, moisture_fa = 2.65, 1.0
-        sg_ca, moisture_ca = 2.70, 0.5
-        fine_csv, coarse_csv, lab_csv = None, None, None
-        purpose = "General"
-        enable_purpose_optimization = False
-        purpose_weights = purpose_profiles_data['General']['weights']
-        enable_calibration_overrides = False
-        calib_fine_fraction = None
-    else: # Use values from Advanced Input widgets
-        grade, exposure = st.session_state.grade, st.session_state.exposure
-        target_slump, cement_choice = st.session_state.target_slump, st.session_state.cement_choice
-        nom_max, agg_shape = st.session_state.nom_max, st.session_state.agg_shape
-        fine_zone, use_sp = st.session_state.fine_zone, st.session_state.use_sp
-        qc_level = st.session_state.qc_level
-        purpose, enable_purpose_optimization = st.session_state.purpose_select, st.session_state.enable_purpose
-        optimize_for = st.session_state.optimize_for_select
-        optimize_cost = (optimize_for == "Cost")
-        sg_fa, moisture_fa = st.session_state.sg_fa_manual, st.session_state.moisture_fa_manual
-        sg_ca, moisture_ca = st.session_state.sg_ca_manual, st.session_state.moisture_ca_manual
+    
+    # Safe lookup for all required parameters from session state, providing defaults if missing.
+    # This replaces the unsafe 'else' block from the original code.
+    grade = st.session_state.get("grade", "M30")
+    exposure = st.session_state.get("exposure", "Severe")
+    target_slump = st.session_state.get("target_slump", 125)
+    cement_choice = st.session_state.get("cement_choice", "OPC 43")
+    nom_max = st.session_state.get("nom_max", 20)
+    agg_shape = st.session_state.get("agg_shape", "Angular (baseline)")
+    fine_zone = st.session_state.get("fine_zone", "Zone II")
+    use_sp = st.session_state.get("use_sp", True)
+    qc_level = st.session_state.get("qc_level", "Good")
+    purpose = st.session_state.get("purpose_select", "General")
+    optimize_for = st.session_state.get("optimize_for_select", "CO₂ Emissions")
+    optimize_cost = (optimize_for == "Cost")
+    enable_purpose_optimization = st.session_state.get("enable_purpose", False)
+
+    sg_fa = st.session_state.get("sg_fa_manual", 2.65)
+    moisture_fa = st.session_state.get("moisture_fa_manual", 1.0)
+    sg_ca = st.session_state.get("sg_ca_manual", 2.70)
+    moisture_ca = st.session_state.get("moisture_ca_manual", 0.5)
+
+    fine_csv = st.session_state.get("fine_csv", None)
+    coarse_csv = st.session_state.get("coarse_csv", None)
+    lab_csv = st.session_state.get("lab_csv", None)
+
+    # Calibration parameters also guarded with .get
+    enable_calibration_overrides = st.session_state.get("enable_calibration_overrides", False)
+    calib_wb_min = st.session_state.get("calib_wb_min", 0.35) if enable_calibration_overrides else 0.35
+    calib_wb_steps = st.session_state.get("calib_wb_steps", 6) if enable_calibration_overrides else 6
+    calib_max_flyash_frac = st.session_state.get("calib_max_flyash_frac", 0.3) if enable_calibration_overrides else 0.3
+    calib_max_ggbs_frac = st.session_state.get("calib_max_ggbs_frac", 0.5) if enable_calibration_overrides else 0.5
+    calib_scm_step = st.session_state.get("calib_scm_step", 0.1) if enable_calibration_overrides else 0.1
+    calib_fine_fraction = st.session_state.get("calib_fine_fraction", 0.40) if enable_calibration_overrides else None
+    if not enable_calibration_overrides: calib_fine_fraction = None
+    
+    # Recalculate purpose weights from sliders if needed, using safe .get
+    purpose_weights = purpose_profiles_data['General']['weights']
+    if enable_purpose_optimization and purpose != 'General':
+        w_co2 = st.session_state.get("w_co2", purpose_profiles_data.get(purpose, purpose_profiles_data['General'])['weights']['co2'])
+        w_cost = st.session_state.get("w_cost", purpose_profiles_data.get(purpose, purpose_profiles_data['General'])['weights']['cost'])
+        w_purpose = st.session_state.get("w_purpose", purpose_profiles_data.get(purpose, purpose_profiles_data['General'])['weights']['purpose'])
         
-        # Read calibration values if the widgets exist and overrides are enabled
-        if enable_calibration_overrides and 'calib_wb_min' in st.session_state:
-             calib_wb_min = st.session_state.calib_wb_min
-             calib_wb_steps = st.session_state.calib_wb_steps
-             calib_max_flyash_frac = st.session_state.calib_max_flyash_frac
-             calib_max_ggbs_frac = st.session_state.calib_max_ggbs_frac
-             calib_scm_step = st.session_state.calib_scm_step
-             calib_fine_fraction = st.session_state.calib_fine_fraction
-        else:
-             calib_fine_fraction = None
-        
-        # Recalculate purpose weights from sliders if needed
-        if enable_purpose_optimization and purpose != 'General':
-             total_w = st.session_state.w_co2 + st.session_state.w_cost + st.session_state.w_purpose
-             if total_w > 0:
-                 purpose_weights = {"w_co2": st.session_state.w_co2 / total_w, "w_cost": st.session_state.w_cost / total_w, "w_purpose": st.session_state.w_purpose / total_w}
+        total_w = w_co2 + w_cost + w_purpose
+        if total_w > 0:
+            purpose_weights = {"w_co2": w_co2 / total_w, "w_cost": w_cost / total_w, "w_purpose": w_purpose / total_w}
 
     if 'user_text_input' not in st.session_state: st.session_state.user_text_input = ""
     if 'clarification_needed' not in st.session_state: st.session_state.clarification_needed = False
@@ -1547,7 +1548,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
         material_props = {'sg_fa': sg_fa, 'moisture_fa': moisture_fa, 'sg_ca': sg_ca, 'moisture_ca': moisture_ca}
         
         calibration_kwargs = {}
-        if enable_calibration_overrides: # Use the values from the expander section
+        if enable_calibration_overrides: # Use the values from the safe lookups above
             calibration_kwargs = {
                 "wb_min": calib_wb_min, "wb_steps": calib_wb_steps,
                 "max_flyash_frac": calib_max_flyash_frac, "max_ggbs_frac": calib_max_ggbs_frac,
@@ -1710,10 +1711,14 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
 
                 if not feasible_mixes.empty:
                     pareto_df = pareto_front(feasible_mixes, x_col="cost", y_col="co2")
+                    
+                    # Ensure safe default for slider
+                    current_alpha = st.session_state.get("pareto_slider_alpha", 0.5)
+                    
                     if not pareto_df.empty:
                         alpha = st.slider(
                             "Prioritize Sustainability (CO₂) ↔ Cost",
-                            min_value=0.0, max_value=1.0, value=st.session_state.get("pareto_slider_alpha", 0.5), step=0.05,
+                            min_value=0.0, max_value=1.0, value=current_alpha, step=0.05,
                             help="Slide towards Sustainability to prioritize low CO₂, or towards Cost to prioritize low price. The green diamond will show the best compromise on the Pareto Front for your chosen preference.",
                             key="pareto_slider_alpha"
                         )
@@ -2054,12 +2059,12 @@ def main():
         
         # Move the LLM parser toggle into the sidebar if we're in manual mode, for easy access
         if not chat_mode and llm_is_ready:
-             st.markdown("---")
-             st.checkbox(
-                 "Use Groq LLM Parser for Text Prompt", 
-                 value=False, key="use_llm_parser",
-                 help="Use the LLM to automatically extract parameters from the text area above."
-             )
+              st.markdown("---")
+              st.checkbox(
+                  "Use Groq LLM Parser for Text Prompt", 
+                  value=False, key="use_llm_parser",
+                  help="Use the LLM to automatically extract parameters from the text area above."
+              )
 
 
     if chat_mode:
