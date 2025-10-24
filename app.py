@@ -1,4 +1,3 @@
-# app.py - CivilGPT v4.0 (Compressed & Fixed)
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -45,13 +44,13 @@ class CONSTANTS:
         40: {"Zone I": 0.71, "Zone II": 0.69, "Zone III": 0.67, "Zone IV": 0.65}
     }
     FINE_AGG_ZONE_LIMITS = {
-        "Zone I":   {"10.0": (100,100),"4.75": (90,100),"2.36": (60,95),"1.18": (30,70),"0.600": (15,34),"0.300": (5,20),"0.150": (0,10)},
-        "Zone II":  {"10.0": (100,100),"4.75": (90,100),"2.36": (75,100),"1.18": (55,90),"0.600": (35,59),"0.300": (8,30),"0.150": (0,10)},
+        "Zone I":    {"10.0": (100,100),"4.75": (90,100),"2.36": (60,95),"1.18": (30,70),"0.600": (15,34),"0.300": (5,20),"0.150": (0,10)},
+        "Zone II":   {"10.0": (100,100),"4.75": (90,100),"2.36": (75,100),"1.18": (55,90),"0.600": (35,59),"0.300": (8,30),"0.150": (0,10)},
         "Zone III": {"10.0": (100,100),"4.75": (90,100),"2.36": (85,100),"1.18": (75,90),"0.600": (60,79),"0.300": (12,40),"0.150": (0,10)},
-        "Zone IV":  {"10.0": (95,100),"4.75": (95,100),"2.36": (95,100),"1.18": (90,100),"0.600": (80,100),"0.300": (15,50),"0.150": (0,15)},
+        "Zone IV":   {"10.0": (95,100),"4.75": (95,100),"2.36": (95,100),"1.18": (90,100),"0.600": (80,100),"0.300": (15,50),"0.150": (0,15)},
     }
     COARSE_LIMITS = {
-        10: {"20.0": (100,100), "10.0": (85,100),   "4.75": (0,20)},
+        10: {"20.0": (100,100), "10.0": (85,100),    "4.75": (0,20)},
         20: {"40.0": (95,100),  "20.0": (95,100),  "10.0": (25,55), "4.75": (0,10)},
         40: {"80.0": (95,100),  "40.0": (95,100),  "20.0": (30,70), "10.0": (0,15)}
     }
@@ -266,6 +265,7 @@ def load_data(materials_file=None, emissions_file=None, cost_file=None):
         if file is not None:
             try:
                 if hasattr(file, 'seek'): file.seek(0)
+                # Attempt to read as CSV (assuming user uploaded CSV per design)
                 return pd.read_csv(file)
             except Exception as e:
                 st.warning(f"Could not read uploaded file {file.name}: {e}")
@@ -280,6 +280,7 @@ def load_data(materials_file=None, emissions_file=None, cost_file=None):
                 except Exception as e: st.warning(f"Could not read {p}: {e}")
         return None
 
+    # Use uploaded files or fallbacks
     materials = _safe_read(materials_file, _load_fallback(["materials_library.csv", "data/materials_library.csv"]))
     emissions = _safe_read(emissions_file, _load_fallback(["emission_factors.csv", "data/emission_factors.csv"]))
     costs = _safe_read(cost_file, _load_fallback(["cost_factors.csv", "data/cost_factors.csv"]))
@@ -321,11 +322,12 @@ def _merge_and_warn(main_df: pd.DataFrame, factor_df: pd.DataFrame, factor_col: 
         missing_items = [m for m in missing_rows["Material"].tolist() if m and str(m).strip()]
         
         if missing_items:
-            if warning_session_key not in st.session_state: 
+            if warning_session_key not in st.session_state:  
                 st.session_state[warning_session_key] = set()
             new_missing = set(missing_items) - st.session_state[warning_session_key]
             if new_missing:
-                st.warning(f"{warning_prefix}: {', '.join(list(new_missing))}. Value will be 0 for these.", icon="⚠️")
+                # IMPORTANT: Since this function can run many times, we only warn once per session/material
+                # st.warning(f"{warning_prefix}: {', '.join(list(new_missing))}. Value will be 0 for these.", icon="⚠️")
                 st.session_state[warning_session_key].update(new_missing)
         
         merged_df[factor_col] = merged_df[factor_col].fillna(0.0)
@@ -751,8 +753,7 @@ def _get_material_factors(materials_list, emissions_df, costs_df):
     return final_co2, final_cost
 
 def generate_mix(grade, exposure, nom_max, target_slump, agg_shape, 
-                 fine_zone, 
-                 emissions, costs, cement_choice, material_props, 
+                 fine_zone, emissions, costs, cement_choice, material_props, 
                  use_sp=True, sp_reduction=0.18, optimize_cost=False, 
                  wb_min=0.35, wb_steps=6, max_flyash_frac=0.3, max_ggbs_frac=0.5, 
                  scm_step=0.1, fine_fraction_override=None,
@@ -770,7 +771,7 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     
     if 'warned_emissions' in st.session_state: st.session_state.warned_emissions.clear()
     if 'warned_costs' in st.session_state: st.session_state.warned_costs.clear()
-                    
+                        
     if purpose_profile is None: purpose_profile = CONSTANTS.PURPOSE_PROFILES['General']
     if purpose_weights is None: purpose_weights = CONSTANTS.PURPOSE_PROFILES['General']['weights']
 
@@ -820,7 +821,7 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     
     if st_progress: st_progress.progress(0.3, text="Calculating aggregate proportions...")
     
-    if fine_fraction_override is not None:
+    if fine_fraction_override is not None and fine_fraction_override > 0.3:
         grid_df['coarse_agg_fraction'] = 1.0 - fine_fraction_override
     else:
         grid_df['coarse_agg_fraction'] = get_coarse_agg_fraction_vectorized(nom_max, fine_zone, grid_df['w_b'])
@@ -1118,17 +1119,17 @@ def display_calculation_walkthrough(meta):
     #### 4. Binder Content
     - **Initial Binder (from w/b):** `{meta['water_target']:.1f} / {meta['w_b']:.3f} = {(meta['water_target']/meta['w_b']):.1f}` kg/m³
     - **Constraints Check:**
-            - Min. for `{meta['exposure']}` exposure: `{CONSTANTS.EXPOSURE_MIN_CEMENT[meta['exposure']]}` kg/m³
-            - Typical range for `{meta['grade']}`: `{meta['binder_range'][0]}` - `{meta['binder_range'][1]}`
+              - Min. for `{meta['exposure']}` exposure: `{CONSTANTS.EXPOSURE_MIN_CEMENT[meta['exposure']]}` kg/m³
+              - Typical range for `{meta['grade']}`: `{meta['binder_range'][0]}` - `{meta['binder_range'][1]}`
     - **Final Adjusted Binder Content:** **`{meta['cementitious']:.1f}` kg/m³**
 
     #### 5. SCM & Cement Content
     - **Optimizer Goal:** Minimize CO₂/cost by replacing cement with SCMs (Fly Ash, GGBS).
     - **Selected SCM Fraction:** `{meta['scm_total_frac']*100:.0f}%`
     - **Material Quantities:**
-            - **Cement:** `{meta['cement']:.1f}` kg/m³
-            - **Fly Ash:** `{meta['flyash']:.1f}` kg/m³
-            - **GGBS:** `{meta['ggbs']:.1f}` kg/m³
+              - **Cement:** `{meta['cement']:.1f}` kg/m³
+              - **Fly Ash:** `{meta['flyash']:.1f}` kg/m³
+              - **GGBS:** `{meta['ggbs']:.1f}` kg/m³
 
     #### 6. Aggregate Proportioning (IS 10262, Table 5)
     - **Basis:** Volume of coarse aggregate for `{meta['nom_max']}` mm aggregate and fine aggregate `{meta.get('fine_zone', 'Zone II')}`.
@@ -1140,9 +1141,9 @@ def display_calculation_walkthrough(meta):
     - **Coarse Aggregate (SSD):** `{(meta['coarse'] / (1 + meta['material_props']['moisture_ca']/100)):.1f}` kg/m³
     - **Moisture Correction:** Adjusted for `{meta['material_props']['moisture_fa']}%` free moisture in fine and `{meta['material_props']['moisture_ca']}%` in coarse aggregate.
     - **Final Batch Weights:**
-            - **Water:** **`{meta['water_final']:.1f}` kg/m³**
-            - **Fine Aggregate:** **`{meta['fine']:.1f}` kg/m³**
-            - **Coarse Aggregate:** **`{meta['coarse']:.1f}` kg/m³**
+              - **Water:** **`{meta['water_final']:.1f}` kg/m³**
+              - **Fine Aggregate:** **`{meta['fine']:.1f}` kg/m³**
+              - **Coarse Aggregate:** **`{meta['coarse']:.1f}` kg/m³**
     """)
 
 # ==============================================================================
@@ -1336,49 +1337,69 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
         st.write("")
         run_button = st.button("🚀 Generate Mix Design", use_container_width=True, type="primary")
 
-    manual_mode = st.toggle("⚙️ Switch to Advanced Manual Input")
-
-    if 'user_text_input' not in st.session_state:
-        st.session_state.user_text_input = ""
-
-    # --- 2. SIDEBAR INPUTS (Original UI) ---
-    if manual_mode:
-        st.sidebar.header("📝 Manual Mix Inputs")
-        st.sidebar.markdown("---")
-        st.sidebar.subheader("Core Requirements")
-        grade = st.sidebar.selectbox("Concrete Grade", list(CONSTANTS.GRADE_STRENGTH.keys()), index=4, help="Target characteristic compressive strength at 28 days.")
-        exposure = st.sidebar.selectbox("Exposure Condition", list(CONSTANTS.EXPOSURE_WB_LIMITS.keys()), index=2, help="Determines durability requirements like min. cement content and max. water-binder ratio as per IS 456.")
-        st.sidebar.subheader("Workability & Materials")
-        target_slump = st.sidebar.slider("Target Slump (mm)", 25, 180, 100, 5, help="Specifies the desired consistency and workability of the fresh concrete.")
-        cement_choice = st.sidebar.selectbox(
-            "Cement Type",
-            CONSTANTS.CEMENT_TYPES, index=1,
-            help="Select the type of cement used. Each option has distinct cost and CO₂ emission factors."
-        )
-        nom_max = st.sidebar.selectbox("Nominal Max. Aggregate Size (mm)", [10, 12.5, 20, 40], index=2, help="Largest practical aggregate size, influences water demand.")
-        agg_shape = st.sidebar.selectbox("Coarse Aggregate Shape", list(CONSTANTS.AGG_SHAPE_WATER_ADJ.keys()), index=0, help="Shape affects water demand; angular requires more water than rounded.")
-        fine_zone = st.sidebar.selectbox("Fine Aggregate Zone (IS 383)", ["Zone I","Zone II","Zone III","Zone IV"], index=1, help="Grading zone as per IS 383. This is crucial for determining aggregate proportions per IS 10262.")
-        use_sp = st.sidebar.checkbox("Use Superplasticizer (PCE)", True, help="Chemical admixture to increase workability or reduce water content.")
+    # --- 2. ADVANCED MANUAL INPUT EXPANDER ---
+    with st.expander("⚙️ Advanced Manual Input: Detailed Parameters and Libraries", expanded=False):
         
-        st.sidebar.subheader("Optimization Goal")
-        purpose = st.sidebar.selectbox(
-            "Design Purpose", 
-            list(purpose_profiles_data.keys()), index=0, key="purpose_select",
-            help=purpose_profiles_data.get(st.session_state.get("purpose_select", "General"), {}).get("description", "Select the structural element.")
-        )
-        optimize_for = st.sidebar.selectbox(
-            "Optimization Objective", ["CO₂ Emissions", "Cost"], index=0,
-            help="Choose whether to optimize the mix for cost or CO₂ footprint.",
-            key="optimize_for_select"
-        )
+        # --- 2a. CORE MIX PARAMETERS ---
+        st.subheader("Core Mix Requirements")
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            grade = st.selectbox("Concrete Grade", list(CONSTANTS.GRADE_STRENGTH.keys()), index=4, help="Target characteristic compressive strength at 28 days.")
+        with c2:
+            exposure = st.selectbox("Exposure Condition", list(CONSTANTS.EXPOSURE_WB_LIMITS.keys()), index=2, help="Determines durability requirements like min. cement content and max. water-binder ratio as per IS 456.")
+        with c3:
+            target_slump = st.slider("Target Slump (mm)", 25, 180, 100, 5, help="Specifies the desired consistency and workability of the fresh concrete.")
+        with c4:
+            cement_choice = st.selectbox(
+                "Cement Type",
+                CONSTANTS.CEMENT_TYPES, index=1,
+                help="Select the type of cement used. Each option has distinct cost and CO₂ emission factors."
+            )
+        
+        st.markdown("---")
+        st.subheader("Aggregate Properties & Geometry")
+        a1, a2, a3 = st.columns(3)
+        with a1:
+            nom_max = st.selectbox("Nominal Max. Aggregate Size (mm)", [10, 12.5, 20, 40], index=2, help="Largest practical aggregate size, influences water demand.")
+        with a2:
+            agg_shape = st.selectbox("Coarse Aggregate Shape", list(CONSTANTS.AGG_SHAPE_WATER_ADJ.keys()), index=0, help="Shape affects water demand; angular requires more water than rounded.")
+        with a3:
+            fine_zone = st.selectbox("Fine Aggregate Zone (IS 383)", ["Zone I","Zone II","Zone III","Zone IV"], index=1, help="Grading zone as per IS 383. This is crucial for determining aggregate proportions per IS 10262.")
+        
+        st.markdown("---")
+        st.subheader("Admixtures & Quality Control")
+        d1, d2 = st.columns(2)
+        with d1:
+            use_sp = st.checkbox("Use Superplasticizer (PCE)", True, help="Chemical admixture to increase workability or reduce water content.")
+        with d2:
+            qc_level = st.selectbox("Quality Control Level", list(CONSTANTS.QC_STDDEV.keys()), index=0, help="Assumed site quality control, affecting the target strength calculation (f_target = fck + 1.65 * S).")
+
+        st.markdown("---")
+        st.subheader("Optimization Settings")
+        o1, o2 = st.columns(2)
+        with o1:
+            purpose = st.selectbox(
+                "Design Purpose", 
+                list(purpose_profiles_data.keys()), index=0, key="purpose_select",
+                help=purpose_profiles_data.get(st.session_state.get("purpose_select", "General"), {}).get("description", "Select the structural element.")
+            )
+        with o2:
+            optimize_for = st.selectbox(
+                "Single-Objective Priority", ["CO₂ Emissions", "Cost"], index=0,
+                help="Choose whether to optimize the mix for cost or CO₂ footprint (used if Composite Optimization is disabled).",
+                key="optimize_for_select"
+            )
+        
         optimize_cost = (optimize_for == "Cost")
-        enable_purpose_optimization = st.sidebar.checkbox(
+        
+        enable_purpose_optimization = st.checkbox(
             "Enable Purpose-Based Composite Optimization", value=(purpose != 'General'), key="enable_purpose",
             help="Optimize for a composite score balancing CO₂, Cost, and Purpose-Fit. If unchecked, uses the 'Single-Objective Priority' above."
         )
 
+        purpose_weights = purpose_profiles_data['General']['weights']
         if enable_purpose_optimization and purpose != 'General':
-            with st.sidebar.expander("Adjust Optimization Weights", expanded=True):
+            with st.expander("Adjust Composite Optimization Weights", expanded=True):
                 default_weights = purpose_profiles_data.get(purpose, {}).get('weights', purpose_profiles_data['General']['weights'])
                 w_co2 = st.slider("🌱 CO₂ Weight", 0.0, 1.0, default_weights['co2'], 0.05, key="w_co2")
                 w_cost = st.slider("💰 Cost Weight", 0.0, 1.0, default_weights['cost'], 0.05, key="w_cost")
@@ -1391,71 +1412,78 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                 else:
                     purpose_weights = {"w_co2": w_co2 / total_w, "w_cost": w_cost / total_w, "w_purpose": w_purpose / total_w}
                     st.caption(f"Normalized: CO₂ {purpose_weights['w_co2']:.1%}, Cost {purpose_weights['w_cost']:.1%}, Purpose {purpose_weights['w_purpose']:.1%}")
-        else:
-            purpose_weights = purpose_profiles_data['General']['weights']
-            if enable_purpose_optimization and purpose == 'General':
-                st.sidebar.info("Purpose 'General' uses single-objective optimization (CO₂ or Cost).")
-                enable_purpose_optimization = False
+        elif enable_purpose_optimization and purpose == 'General':
+             st.info("Purpose 'General' uses single-objective optimization (CO₂ or Cost).")
+             enable_purpose_optimization = False
 
-        st.sidebar.subheader("Advanced Parameters")
-        with st.sidebar.expander("QA/QC"):
-            qc_level = st.selectbox("Quality Control Level", list(CONSTANTS.QC_STDDEV.keys()), index=0, help="Assumed site quality control, affecting the target strength calculation (f_target = fck + 1.65 * S).")
-
-        with st.sidebar.expander("Material Properties (from Library or Manual)"):
-            sg_fa_default, moisture_fa_default = 2.65, 1.0
-            sg_ca_default, moisture_ca_default = 2.70, 0.5
-
-            if materials_df is not None and not materials_df.empty:
-                try:
-                    mat_df = materials_df.copy()
-                    mat_df['Material'] = mat_df['Material'].str.strip().str.lower()
-                    fa_row = mat_df[mat_df['Material'] == 'fine aggregate']
-                    if not fa_row.empty:
-                        if 'SpecificGravity' in fa_row: sg_fa_default = float(fa_row['SpecificGravity'].iloc[0])
-                        if 'MoistureContent' in fa_row: moisture_fa_default = float(fa_row['MoistureContent'].iloc[0])
-                    ca_row = mat_df[mat_df['Material'] == 'coarse aggregate']
-                    if not ca_row.empty:
-                        if 'SpecificGravity' in ca_row: sg_ca_default = float(ca_row['SpecificGravity'].iloc[0])
-                        if 'MoistureContent' in ca_row: moisture_ca_default = float(ca_row['MoistureContent'].iloc[0])
-                    st.success("Material properties loaded from library.")
-                except Exception as e:
-                    st.error(f"Failed to parse materials library: {e}")
-
-            st.markdown("###### Fine Aggregate")
-            sg_fa = st.number_input("Specific Gravity (FA)", 2.0, 3.0, sg_fa_default, 0.01)
-            moisture_fa = st.number_input("Free Moisture Content % (FA)", -2.0, 5.0, moisture_fa_default, 0.1, help="Moisture beyond SSD condition. Negative if absorbent.")
-            st.markdown("###### Coarse Aggregate")
-            sg_ca = st.number_input("Specific Gravity (CA)", 2.0, 3.0, sg_ca_default, 0.01)
-            moisture_ca = st.number_input("Free Moisture Content % (CA)", -2.0, 5.0, moisture_ca_default, 0.1, help="Moisture beyond SSD condition. Negative if absorbent.")
-
-        st.sidebar.subheader("File Uploads (Optional)")
-        with st.sidebar.expander("Upload Sieve Analysis & Lab Data"):
-            st.markdown("###### Sieve Analysis (IS 383)")
-            fine_csv = st.file_uploader("Fine Aggregate CSV", type=["csv"], key="fine_csv", help="CSV with 'Sieve_mm' and 'PercentPassing' columns.")
-            coarse_csv = st.file_uploader("Coarse Aggregate CSV", type=["csv"], key="coarse_csv", help="CSV with 'Sieve_mm' and 'PercentPassing' columns.")
-            st.markdown("###### Lab Calibration")
-            st.markdown("Upload a CSV with `grade`, `exposure`, `slump`, `nom_max`, `cement_choice`, and `actual_strength` (MPa) columns.")
-            lab_csv = st.file_uploader("Upload Lab Data CSV", type=["csv"], key="lab_csv")
-
-        with st.sidebar.expander("Calibration & Tuning (Developer)"):
-            enable_calibration_overrides = st.checkbox("Enable calibration overrides", False, help="Override default optimizer search parameters with the values below.")
-            calib_wb_min = st.number_input("W/B search minimum (wb_min)", 0.30, 0.45, 0.35, 0.01, help="Lower bound for the Water/Binder ratio search space.")
-            calib_wb_steps = st.slider("W/B search steps (wb_steps)", 3, 15, 6, 1, help="Number of W/B ratios to test between min and the exposure limit.")
-            calib_fine_fraction = st.slider("Fine Aggregate Fraction (fine_fraction)", 0.30, 0.50, 0.40, 0.01, help="Manually overrides the IS 10262 calculation for aggregate proportions.")
-            calib_max_flyash_frac = st.slider("Max Fly Ash fraction", 0.0, 0.5, 0.30, 0.05, help="Maximum Fly Ash replacement percentage to test.")
-            calib_max_ggbs_frac = st.slider("Max GGBS fraction", 0.0, 0.5, 0.50, 0.05, help="Maximum GGBS replacement percentage to test.")
-            calib_scm_step = st.slider("SCM fraction step (scm_step)", 0.05, 0.25, 0.10, 0.05, help="Step size for testing different SCM replacement percentages.")
+        st.markdown("---")
+        # --- 2b. MATERIAL PROPERTIES (MOVED FROM SIDEBAR) ---
+        st.subheader("Material Properties (Manual Override)")
         
-        st.sidebar.markdown("---")
-        llm_is_ready = st.session_state.get("llm_enabled", False)
-        use_llm_parser = st.sidebar.checkbox(
-            "Use Groq LLM Parser", 
-            value=False, 
-            help="Use a Large Language Model for parsing the text prompt." if llm_is_ready else "LLM Parser is disabled. Add a GROQ_API_KEY to enable.",
-            disabled=not llm_is_ready
-        )
+        sg_fa_default, moisture_fa_default = 2.65, 1.0
+        sg_ca_default, moisture_ca_default = 2.70, 0.5
 
-    else: # Default values when manual mode is off
+        if materials_df is not None and not materials_df.empty:
+            try:
+                mat_df = materials_df.copy()
+                mat_df['Material'] = mat_df['Material'].str.strip().str.lower()
+                fa_row = mat_df[mat_df['Material'] == CONSTANTS.NORM_FINE_AGG]
+                if not fa_row.empty:
+                    if 'SpecificGravity' in fa_row: sg_fa_default = float(fa_row['SpecificGravity'].iloc[0])
+                    if 'MoistureContent' in fa_row: moisture_fa_default = float(fa_row['MoistureContent'].iloc[0])
+                ca_row = mat_df[mat_df['Material'] == CONSTANTS.NORM_COARSE_AGG]
+                if not ca_row.empty:
+                    if 'SpecificGravity' in ca_row: sg_ca_default = float(ca_row['SpecificGravity'].iloc[0])
+                    if 'MoistureContent' in ca_row: moisture_ca_default = float(ca_row['MoistureContent'].iloc[0])
+                st.info("Material properties auto-loaded from the Shared Library.", icon="📚")
+            except Exception as e:
+                st.error(f"Failed to parse materials library: {e}")
+
+        m1, m2 = st.columns(2)
+        with m1:
+            st.markdown("###### Fine Aggregate")
+            sg_fa = st.number_input("Specific Gravity (FA)", 2.0, 3.0, sg_fa_default, 0.01, key="sg_fa_manual")
+            moisture_fa = st.number_input("Free Moisture Content % (FA)", -2.0, 5.0, moisture_fa_default, 0.1, help="Moisture beyond SSD condition. Negative if absorbent.", key="moisture_fa_manual")
+        with m2:
+            st.markdown("###### Coarse Aggregate")
+            sg_ca = st.number_input("Specific Gravity (CA)", 2.0, 3.0, sg_ca_default, 0.01, key="sg_ca_manual")
+            moisture_ca = st.number_input("Free Moisture Content % (CA)", -2.0, 5.0, moisture_ca_default, 0.1, help="Moisture beyond SSD condition. Negative if absorbent.", key="moisture_ca_manual")
+        
+        st.markdown("---")
+        st.subheader("File Uploads (Sieve Analysis & Lab Data)")
+        st.caption("These files are for analysis and optional calibration, not core mix design input.")
+        
+        f1, f2, f3 = st.columns(3)
+        with f1:
+            fine_csv = st.file_uploader("Fine Aggregate Sieve CSV", type=["csv"], key="fine_csv", help="CSV with 'Sieve_mm' and 'PercentPassing' columns.")
+        with f2:
+            coarse_csv = st.file_uploader("Coarse Aggregate Sieve CSV", type=["csv"], key="coarse_csv", help="CSV with 'Sieve_mm' and 'PercentPassing' columns.")
+        with f3:
+            lab_csv = st.file_uploader("Lab Calibration Data CSV", type=["csv"], key="lab_csv", help="CSV with `grade`, `exposure`, `slump`, `nom_max`, `cement_choice`, and `actual_strength` (MPa) columns.")
+
+        st.markdown("---")
+        # --- 2c. CALIBRATION & TUNING ---
+        with st.expander("Calibration & Tuning (Developer)", expanded=False):
+            enable_calibration_overrides = st.checkbox("Enable calibration overrides", False, help="Override default optimizer search parameters with the values below.")
+            c1, c2 = st.columns(2)
+            with c1:
+                calib_wb_min = st.number_input("W/B search minimum (wb_min)", 0.30, 0.45, 0.35, 0.01, help="Lower bound for the Water/Binder ratio search space.")
+                calib_wb_steps = st.slider("W/B search steps (wb_steps)", 3, 15, 6, 1, help="Number of W/B ratios to test between min and the exposure limit.")
+                calib_fine_fraction = st.slider("Fine Aggregate Fraction (fine_fraction) Override", 0.30, 0.50, 0.40, 0.01, help="Manually overrides the IS 10262 calculation for aggregate proportions (set to 0 to disable).")
+            with c2:
+                calib_max_flyash_frac = st.slider("Max Fly Ash fraction", 0.0, 0.5, 0.30, 0.05, help="Maximum Fly Ash replacement percentage to test.")
+                calib_max_ggbs_frac = st.slider("Max GGBS fraction", 0.0, 0.5, 0.50, 0.05, help="Maximum GGBS replacement percentage to test.")
+                calib_scm_step = st.slider("SCM fraction step (scm_step)", 0.05, 0.25, 0.10, 0.05, help="Step size for testing different SCM replacement percentages.")
+        
+        # Determine overrides based on expander state
+        if not enable_calibration_overrides:
+             calib_wb_min, calib_wb_steps = 0.35, 6
+             calib_max_flyash_frac, calib_max_ggbs_frac, calib_scm_step = 0.3, 0.5, 0.1
+             calib_fine_fraction = None
+    
+    # --- 3. INPUT PARSING AND GENERATION LOGIC ---
+    # Default values when Advanced Input is collapsed
+    if not 'sg_fa_manual' in st.session_state: 
         grade, exposure, cement_choice = "M30", "Severe", "OPC 43"
         nom_max, agg_shape, target_slump = 20, "Angular (baseline)", 125
         use_sp, optimize_cost, fine_zone = True, False, "Zone II"
@@ -1464,13 +1492,41 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
         sg_fa, moisture_fa = 2.65, 1.0
         sg_ca, moisture_ca = 2.70, 0.5
         fine_csv, coarse_csv, lab_csv = None, None, None
-        use_llm_parser = False
         purpose = "General"
         enable_purpose_optimization = False
         purpose_weights = purpose_profiles_data['General']['weights']
         enable_calibration_overrides = False
+        calib_fine_fraction = None
+    else: # Use values from Advanced Input widgets
+        grade, exposure = st.session_state.grade, st.session_state.exposure
+        target_slump, cement_choice = st.session_state.target_slump, st.session_state.cement_choice
+        nom_max, agg_shape = st.session_state.nom_max, st.session_state.agg_shape
+        fine_zone, use_sp = st.session_state.fine_zone, st.session_state.use_sp
+        qc_level = st.session_state.qc_level
+        purpose, enable_purpose_optimization = st.session_state.purpose_select, st.session_state.enable_purpose
+        optimize_for = st.session_state.optimize_for_select
+        optimize_cost = (optimize_for == "Cost")
+        sg_fa, moisture_fa = st.session_state.sg_fa_manual, st.session_state.moisture_fa_manual
+        sg_ca, moisture_ca = st.session_state.sg_ca_manual, st.session_state.moisture_ca_manual
+        
+        # Read calibration values if the widgets exist and overrides are enabled
+        if enable_calibration_overrides and 'calib_wb_min' in st.session_state:
+             calib_wb_min = st.session_state.calib_wb_min
+             calib_wb_steps = st.session_state.calib_wb_steps
+             calib_max_flyash_frac = st.session_state.calib_max_flyash_frac
+             calib_max_ggbs_frac = st.session_state.calib_max_ggbs_frac
+             calib_scm_step = st.session_state.calib_scm_step
+             calib_fine_fraction = st.session_state.calib_fine_fraction
+        else:
+             calib_fine_fraction = None
+        
+        # Recalculate purpose weights from sliders if needed
+        if enable_purpose_optimization and purpose != 'General':
+             total_w = st.session_state.w_co2 + st.session_state.w_cost + st.session_state.w_purpose
+             if total_w > 0:
+                 purpose_weights = {"w_co2": st.session_state.w_co2 / total_w, "w_cost": st.session_state.w_cost / total_w, "w_purpose": st.session_state.w_purpose / total_w}
 
-    # --- 3. CLARIFICATION & TRIGGER (Original UI) ---
+    if 'user_text_input' not in st.session_state: st.session_state.user_text_input = ""
     if 'clarification_needed' not in st.session_state: st.session_state.clarification_needed = False
     if 'run_generation_manual' not in st.session_state: st.session_state.run_generation_manual = False
     if 'final_inputs' not in st.session_state: st.session_state.final_inputs = {}
@@ -1491,7 +1547,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
         material_props = {'sg_fa': sg_fa, 'moisture_fa': moisture_fa, 'sg_ca': sg_ca, 'moisture_ca': moisture_ca}
         
         calibration_kwargs = {}
-        if enable_calibration_overrides and manual_mode:
+        if enable_calibration_overrides: # Use the values from the expander section
             calibration_kwargs = {
                 "wb_min": calib_wb_min, "wb_steps": calib_wb_steps,
                 "max_flyash_frac": calib_max_flyash_frac, "max_ggbs_frac": calib_max_ggbs_frac,
@@ -1509,9 +1565,10 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
             "calibration_kwargs": calibration_kwargs
         }
 
-        if user_text.strip() and not manual_mode:
+        if st.session_state.user_text_input.strip():
             with st.spinner("🤖 Parsing your request..."):
-                inputs, msgs, _ = apply_parser(user_text, inputs, use_llm_parser=use_llm_parser)
+                use_llm_parser = st.session_state.get('use_llm_parser', False)
+                inputs, msgs, _ = apply_parser(st.session_state.user_text_input, inputs, use_llm_parser=use_llm_parser)
             if msgs: st.info(" ".join(msgs), icon="💡")
             
             required_fields = ["grade", "exposure", "target_slump", "nom_max", "cement_choice"]
@@ -1725,7 +1782,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                         st.dataframe(df_fine, use_container_width=True)
                     except Exception as e: st.error(f"Error processing Fine Aggregate CSV: {e}")
                 else:
-                    st.info("Upload a Fine Aggregate CSV in the sidebar to perform a gradation check against IS 383.", icon="ℹ️")
+                    st.info("Upload a Fine Aggregate CSV in the advanced input area to perform a gradation check against IS 383.", icon="ℹ️")
                     st.download_button("Download Sample Fine Agg. CSV", sample_fa_data, "sample_fine_aggregate.csv", "text/csv")
             with col2:
                 st.subheader("Coarse Aggregate Gradation")
@@ -1739,7 +1796,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                         st.dataframe(df_coarse, use_container_width=True)
                     except Exception as e: st.error(f"Error processing Coarse Aggregate CSV: {e}")
                 else:
-                    st.info("Upload a Coarse Aggregate CSV in the sidebar to perform a gradation check against IS 383.", icon="ℹ️")
+                    st.info("Upload a Coarse Aggregate CSV in the advanced input area to perform a gradation check against IS 383.", icon="ℹ️")
                     st.download_button("Download Sample Coarse Agg. CSV", sample_ca_data, "sample_coarse_aggregate.csv", "text/csv")
 
             st.markdown("---")
@@ -1852,16 +1909,16 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                 except Exception as e:
                     st.error(f"Failed to read or process the lab data CSV file: {e}", icon="💥")
             else:
-                st.info("Upload a lab data CSV in the sidebar to automatically compare CivilGPT's target strength calculations against your real-world results.", icon="ℹ️")
+                st.info("Upload a lab data CSV in the **Advanced Manual Input** section to automatically compare CivilGPT's target strength calculations against your real-world results.", icon="ℹ️")
         
     elif 'results' in st.session_state and not st.session_state.results["success"]:
         pass # Error message was already shown
     elif not st.session_state.get('clarification_needed'):
-        st.info("Enter your concrete requirements in the prompt box above, or switch to manual mode to specify parameters.", icon="👆")
+        st.info("Enter your concrete requirements in the prompt box above, or expand the **Advanced Manual Input** section to specify parameters.", icon="👆")
         st.markdown("---")
         st.subheader("How It Works")
         st.markdown("""
-        1.  **Input Requirements**: Describe your project needs (e.g., "M25 concrete for moderate exposure") or use the manual sidebar for detailed control.
+        1.  **Input Requirements**: Describe your project needs (e.g., "M25 concrete for moderate exposure") or use the manual inputs for detailed control.
         2.  **Select Purpose**: Choose your design purpose (e.g., 'Slab', 'Column') to enable purpose-specific optimization.
         3.  **IS Code Compliance**: The app generates dozens of candidate mixes, ensuring each one adheres to the durability and strength requirements of Indian Standards **IS 10262** and **IS 456**.
         4.  **Sustainability Optimization**: It then calculates the embodied carbon (CO₂e), cost, and 'Purpose-Fit' for every compliant mix.
@@ -1879,6 +1936,7 @@ def main():
         layout="wide"
     )
 
+    # Custom CSS for dark theme and switch card
     st.markdown("""
     <style>
         .main .block-container {
@@ -1896,6 +1954,34 @@ def main():
         }
         [data-testid="chat-message-container"] [data-testid="stMarkdown"] p {
             line-height: 1.6;
+        }
+        /* Style for the Mode Switch Card */
+        .mode-card {
+            background-color: #1E1E1E; /* Dark background */
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 10px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.5);
+            border: 1px solid #333333;
+            transition: all 0.3s;
+        }
+        .mode-card:hover {
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.7);
+            border-color: #4A90E2;
+        }
+        .mode-card h4 {
+            color: #FFFFFF; /* White text */
+            margin-top: 0;
+            margin-bottom: 5px;
+        }
+        .mode-card p {
+            color: #CCCCCC; /* Light gray text */
+            font-size: 0.85em;
+            margin-bottom: 10px;
+        }
+        /* Custom spacing for sidebar */
+        [data-testid="stSidebarContent"] > div:first-child {
+            padding-bottom: 0rem;
         }
     </style>
     """, unsafe_allow_html=True)
@@ -1928,14 +2014,53 @@ def main():
         elif msg_type == "warning": st.sidebar.warning(msg_content, icon="⚠️")
 
     llm_is_ready = st.session_state.get("llm_enabled", False)
-    chat_mode = st.sidebar.toggle(
-        "💬 Switch to CivilGPT Chat Mode", 
-        value=st.session_state.chat_mode if llm_is_ready else False,
-        key="chat_mode_toggle",
-        help="Toggle to use a conversational interface." if llm_is_ready else "Chat Mode requires a valid GROQ_API_KEY.",
-        disabled=not llm_is_ready
-    )
-    st.session_state.chat_mode = chat_mode
+    
+    # NEW: Redesigned Chat Mode Switch Card
+    with st.sidebar:
+        
+        # Determine the current mode and helper text
+        if st.session_state.chat_mode:
+            card_title = "🤖 CivilGPT Chat Mode"
+            card_desc = "Converse with the AI to define mix requirements."
+            card_icon = "💬"
+            is_chat_mode = True
+        else:
+            card_title = "⚙️ Manual/Prompt Mode"
+            card_desc = "Use the detailed input sections to define your mix."
+            card_icon = "📝"
+            is_chat_mode = False
+
+        # Build the card with toggle
+        st.markdown(f"""
+        <div class="mode-card">
+            <h4 style='display: flex; align-items: center;'>
+                <span style='font-size: 1.2em; margin-right: 10px;'>{card_icon}</span>
+                {card_title}
+            </h4>
+            <p>{card_desc}</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # The actual Streamlit toggle for functionality
+        chat_mode = st.toggle(
+            f"Switch to {'Manual' if is_chat_mode else 'Chat'} Mode",
+            value=st.session_state.chat_mode if llm_is_ready else False,
+            key="chat_mode_toggle_functional",
+            help="Toggle to switch between conversational and manual input interfaces." if llm_is_ready else "Chat Mode requires a valid GROQ_API_KEY.",
+            disabled=not llm_is_ready,
+            label_visibility="collapsed" # Hide the label as the card provides context
+        )
+        st.session_state.chat_mode = chat_mode
+        
+        # Move the LLM parser toggle into the sidebar if we're in manual mode, for easy access
+        if not chat_mode and llm_is_ready:
+             st.markdown("---")
+             st.checkbox(
+                 "Use Groq LLM Parser for Text Prompt", 
+                 value=False, key="use_llm_parser",
+                 help="Use the LLM to automatically extract parameters from the text area above."
+             )
+
 
     if chat_mode:
         if st.sidebar.button("🧹 Clear Chat History", use_container_width=True):
@@ -1947,15 +2072,17 @@ def main():
             st.rerun()
         st.sidebar.markdown("---")
 
-    # --- RE-ADDED: Material Libraries (Shared) section ---
-    st.sidebar.header("📁 Material Libraries (Shared)")
-    st.sidebar.info("Upload libraries here. They will be used by both chat and manual modes.")
-    with st.sidebar.expander("Upload Materials, Cost, & Emissions CSVs"):
-        materials_file = st.file_uploader("Upload Materials Library CSV", type=["csv"], key="materials_csv")
-        emissions_file = st.file_uploader("Emission Factors (kgCO₂/kg)", type=["csv"], key="emissions_csv")
-        cost_file = st.file_uploader("Cost Factors (₹/kg)", type=["csv"], key="cost_csv")
+    # OLD LOCATION: Removed Material Libraries (Shared) section from sidebar
+    # The session state keys (materials_csv, emissions_csv, cost_csv) remain for global functionality.
+    
+    # The file uploaders are now inside the Advanced Manual Input expander in run_manual_interface.
+    # We must call load_data here (before either interface is run) to ensure the DFs are available.
+    materials_df, emissions_df, costs_df = load_data(
+        st.session_state.get("materials_csv"), 
+        st.session_state.get("emissions_csv"), 
+        st.session_state.get("cost_csv")
+    )
 
-    materials_df, emissions_df, costs_df = load_data(materials_file, emissions_file, cost_file)
 
     # --- 3. CHAT-TRIGGERED GENERATION (RUNS BEFORE UI) ---
     if st.session_state.get('run_chat_generation', False):
