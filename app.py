@@ -1,4 +1,4 @@
-# app.py - CivilGPT v4.0 (Compressed)
+# app.py - CivilGPT v4.0 (Compressed & Fixed)
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -14,6 +14,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import inch
 from functools import lru_cache
 from itertools import product
+import traceback # Added for cleaner error logging
 
 # ==============================================================================
 # PART 1: CONSTANTS & CORE DATA
@@ -50,7 +51,7 @@ class CONSTANTS:
         "Zone IV":  {"10.0": (95,100),"4.75": (95,100),"2.36": (95,100),"1.18": (90,100),"0.600": (80,100),"0.300": (15,50),"0.150": (0,15)},
     }
     COARSE_LIMITS = {
-        10: {"20.0": (100,100), "10.0": (85,100),       "4.75": (0,20)},
+        10: {"20.0": (100,100), "10.0": (85,100),   "4.75": (0,20)},
         20: {"40.0": (95,100),  "20.0": (95,100),  "10.0": (25,55), "4.75": (0,10)},
         40: {"80.0": (95,100),  "40.0": (95,100),  "20.0": (30,70), "10.0": (0,15)}
     }
@@ -399,7 +400,7 @@ def run_lab_calibration(lab_df):
     if not results: return None, {}
     results_df = pd.DataFrame(results)
     mae = results_df["Error (MPa)"].abs().mean()
-    rmse = np.sqrt((results_df["Error (MPa)"] ** 2).mean())
+    rmse = np.sqrt((results_df["Error (MPa)"].clip(lower=0) ** 2).mean()) # Cliped lower to 0 for robustness
     bias = results_df["Error (MPa)"].mean()
     metrics = {"Mean Absolute Error (MPa)": mae, "Root Mean Squared Error (MPa)": rmse, "Mean Bias (MPa)": bias}
     return results_df, metrics
@@ -769,7 +770,7 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     
     if 'warned_emissions' in st.session_state: st.session_state.warned_emissions.clear()
     if 'warned_costs' in st.session_state: st.session_state.warned_costs.clear()
-                 
+                    
     if purpose_profile is None: purpose_profile = CONSTANTS.PURPOSE_PROFILES['General']
     if purpose_weights is None: purpose_weights = CONSTANTS.PURPOSE_PROFILES['General']['weights']
 
@@ -1237,7 +1238,6 @@ def run_generation_logic(inputs: dict, emissions_df: pd.DataFrame, costs_df: pd.
             
     except Exception as e:
         st.error(f"An unexpected error occurred: {e}", icon="💥")
-        import traceback
         st.exception(traceback.format_exc())
         st.session_state.results = {"success": False, "trace": None}
 
@@ -1282,9 +1282,7 @@ def run_chat_interface(purpose_profiles_data: dict):
         st.info("Your full mix report is ready. You can ask for refinements or open the full report.")
         if st.button("📊 Open Full Mix Report & Switch to Manual Mode", use_container_width=True, type="primary"):
             st.session_state.chat_mode = False
-            # --- FIX: Set the active tab to Downloads & Reports for the manual UI ---
             st.session_state.active_tab_name = "📥 **Downloads & Reports**"
-            # --- END FIX ---
             st.toast("Opening full report...", icon="📊")
             st.rerun()
 
@@ -1410,7 +1408,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
             if materials_df is not None and not materials_df.empty:
                 try:
                     mat_df = materials_df.copy()
-                    mat_df['Material'] = mat_df['Material'].str.strip().lower()
+                    mat_df['Material'] = mat_df['Material'].str.strip().str.lower()
                     fa_row = mat_df[mat_df['Material'] == 'fine aggregate']
                     if not fa_row.empty:
                         if 'SpecificGravity' in fa_row: sg_fa_default = float(fa_row['SpecificGravity'].iloc[0])
@@ -1493,7 +1491,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
         material_props = {'sg_fa': sg_fa, 'moisture_fa': moisture_fa, 'sg_ca': sg_ca, 'moisture_ca': moisture_ca}
         
         calibration_kwargs = {}
-        if enable_calibration_overrides:
+        if enable_calibration_overrides and manual_mode:
             calibration_kwargs = {
                 "wb_min": calib_wb_min, "wb_steps": calib_wb_steps,
                 "max_flyash_frac": calib_max_flyash_frac, "max_ggbs_frac": calib_max_ggbs_frac,
@@ -1579,7 +1577,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
         base_df, base_meta = results["base_df"], results["base_meta"]
         trace, inputs = results["trace"], results["inputs"]
         
-        # --- START: Tab Controller Fix ---
+        # --- FIX: Tab Controller Fix ---
         TAB_NAMES = [
             "📊 **Overview**", "🌱 **Optimized Mix**", "🏗️ **Baseline Mix**",
             "⚖️ **Trade-off Explorer**", "📋 **QA/QC & Gradation**",
@@ -1597,7 +1595,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
             default_index = 0
             st.session_state.active_tab_name = TAB_NAMES[0]
 
-        # Replace st.tabs with st.radio
+        # Use st.radio for navigation control
         selected_tab = st.radio(
             "Mix Report Navigation",
             options=TAB_NAMES,
@@ -1607,9 +1605,9 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
             key="manual_tabs"
         )
         
-        # Update the session state variable for next time (e.g., if user clicks)
+        # Update the session state variable for next time
         st.session_state.active_tab_name = selected_tab
-        # --- END: Tab Controller Fix ---
+        # --- END FIX ---
 
         if selected_tab == "📊 **Overview**":
             co2_opt, cost_opt = opt_meta["co2_total"], opt_meta["cost_total"]
@@ -1633,9 +1631,9 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
             st.markdown("---")
             col1, col2 = st.columns(2)
             _plot_overview_chart(col1, "📊 Embodied Carbon (CO₂e)", "CO₂ (kg/m³)", 
-                                co2_base, co2_opt, ['#D3D3D3', '#4CAF50'], '{:,.1f}')
+                                 co2_base, co2_opt, ['#D3D3D3', '#4CAF50'], '{:,.1f}')
             _plot_overview_chart(col2, "💵 Material Cost", "Cost (₹/m³)", 
-                                cost_base, cost_opt, ['#D3D3D3', '#2196F3'], '₹{:,.0f}')
+                                 cost_base, cost_opt, ['#D3D3D3', '#2196F3'], '₹{:,.0f}')
 
         elif selected_tab == "🌱 **Optimized Mix**":
             display_mix_details("🌱 Optimized Low-Carbon Mix Design", opt_df, opt_meta, inputs['exposure'])
@@ -1699,8 +1697,8 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                             c4, c5 = st.columns(2)
                             c4.metric("⚠️ Purpose Penalty", f"{full_compromise_mix['purpose_penalty']:.2f}")
                             c5.metric("🎯 Composite Score", f"{full_compromise_mix['composite_score']:.3f}")
-                else:
-                    st.info("No Pareto front could be determined from the feasible mixes.", icon="ℹ️")
+                    else:
+                        st.info("No Pareto front could be determined from the feasible mixes.", icon="ℹ️")
                 else:
                     st.warning("No feasible mixes were found by the optimizer, so no trade-off plot can be generated.", icon="⚠️")
             else:
@@ -1978,8 +1976,8 @@ def main():
             **chat_inputs # Override defaults with chat values
         }
         
-        inputs["optimize_cost"] = (inputs["optimize_for"] == "Cost")
-        inputs["enable_purpose_optimization"] = (inputs["purpose"] != 'General')
+        inputs["optimize_cost"] = (inputs.get("optimize_for") == "Cost")
+        inputs["enable_purpose_optimization"] = (inputs.get("purpose") != 'General')
         if inputs["enable_purpose_optimization"]:
             inputs["purpose_weights"] = purpose_profiles_data.get(inputs["purpose"], {}).get('weights', purpose_profiles_data['General']['weights'])
 
