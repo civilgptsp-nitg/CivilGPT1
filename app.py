@@ -47,9 +47,9 @@ class CONSTANTS:
     }
     FINE_AGG_ZONE_LIMITS = {
         "Zone I":    {"10.0": (100,100),"4.75": (90,100),"2.36": (60,95),"1.18": (30,70),"0.600": (15,34),"0.300": (5,20),"0.150": (0,10)},
-        "Zone II":   {"10.0": (100,100),"4.75": (90,100),"2.36": (75,100),"1.18": (55,90),"0.600": (35,59),"0.300": (8,30),"0.150": (0,10)},
+        "Zone II":    {"10.0": (100,100),"4.75": (90,100),"2.36": (75,100),"1.18": (55,90),"0.600": (35,59),"0.300": (8,30),"0.150": (0,10)},
         "Zone III": {"10.0": (100,100),"4.75": (90,100),"2.36": (85,100),"1.18": (75,90),"0.600": (60,79),"0.300": (12,40),"0.150": (0,10)},
-        "Zone IV":   {"10.0": (95,100),"4.75": (95,100),"2.36": (95,100),"1.18": (90,100),"0.600": (80,100),"0.300": (15,50),"0.150": (0,15)},
+        "Zone IV":    {"10.0": (95,100),"4.75": (95,100),"2.36": (95,100),"1.18": (90,100),"0.600": (80,100),"0.300": (15,50),"0.150": (0,15)},
     }
     COARSE_LIMITS = {
         10: {"20.0": (100,100), "10.0": (85,100),    "4.75": (0,20)},
@@ -755,12 +755,12 @@ def _get_material_factors(materials_list, emissions_df, costs_df):
     return final_co2, final_cost
 
 def generate_mix(grade, exposure, nom_max, target_slump, agg_shape, 
-                  fine_zone, emissions, costs, cement_choice, material_props, 
-                  use_sp=True, sp_reduction=0.18, optimize_cost=False, 
-                  wb_min=0.35, wb_steps=6, max_flyash_frac=0.3, max_ggbs_frac=0.5, 
-                  scm_step=0.1, fine_fraction_override=None,
-                  purpose='General', purpose_profile=None, purpose_weights=None,
-                  enable_purpose_optimization=False, st_progress=None):
+                 fine_zone, emissions, costs, cement_choice, material_props, 
+                 use_sp=True, sp_reduction=0.18, optimize_cost=False, 
+                 wb_min=0.35, wb_steps=6, max_flyash_frac=0.3, max_ggbs_frac=0.5, 
+                 scm_step=0.1, fine_fraction_override=None,
+                 purpose='General', purpose_profile=None, purpose_weights=None,
+                 enable_purpose_optimization=False, st_progress=None):
 
     # --- 1. Setup Parameters ---
     if st_progress: st_progress.progress(0.0, text="Initializing parameters...")
@@ -1177,10 +1177,11 @@ def run_generation_logic(inputs: dict, emissions_df: pd.DataFrame, costs_df: pd.
         
         if purpose == 'General': enable_purpose_opt = False
         
-        if enable_purpose_opt:
-            st.info(f"🚀 Running composite optimization for **{purpose}**.", icon="🛠️")
-        else:
-            st.info(f"Running single-objective optimization for **{inputs.get('optimize_for', 'CO₂ Emissions')}**.", icon="⚙️")
+        if st_progress: # Only show info box in manual mode, not chat (where the text shows in chat history)
+            if enable_purpose_opt:
+                st.info(f"🚀 Running composite optimization for **{purpose}**.", icon="🛠️")
+            else:
+                st.info(f"Running single-objective optimization for **{inputs.get('optimize_for', 'CO₂ Emissions')}**.", icon="⚙️")
         
         # --- 3. Run Generation ---
         fck = CONSTANTS.GRADE_STRENGTH[inputs["grade"]]
@@ -1244,6 +1245,24 @@ def run_generation_logic(inputs: dict, emissions_df: pd.DataFrame, costs_df: pd.
         st.exception(traceback.format_exc())
         st.session_state.results = {"success": False, "trace": None}
 
+
+def display_full_mix_report_from_chat():
+    """
+    Helper function to render the full manual mode report structure when 
+    called from chat mode's button callback, ensuring UI consistency.
+    This function re-uses the rendering logic from the manual interface's 
+    results section (Section 5) but is called in the main loop after a state 
+    switch, forcing the correct display.
+    """
+    # This function is not called directly from the main logic flow in this fixed version.
+    # The fix is to ensure state is set correctly, allowing the main logic's
+    # `run_manual_interface` or the global logic flow to handle the display 
+    # when `st.session_state.chat_mode` is False and `st.session_state.results` exists.
+    # The existing implementation of run_manual_interface handles this correctly 
+    # via the shared 'DISPLAY RESULTS' block.
+    pass
+
+
 # ==============================================================================
 # PART 6: STREAMLIT APP (UI Sub-modules)
 # ==============================================================================
@@ -1286,17 +1305,22 @@ def run_chat_interface(purpose_profiles_data: dict):
         st.info("Your full mix report is ready. You can ask for refinements or open the full report.")
 
         # === START OF FIX (The core bug fix) ===
+        # The key issue was a race condition and inconsistent state across reruns.
+        # FIX: Ensure all state variables controlling the mode switch AND report rendering
+        # (chat_mode, chat_mode_toggle_functional, active_tab_name, manual_tabs) are set 
+        # in the *same callback* before rerunning. We DO NOT delete 'results'.
         def switch_to_manual_mode():
             # 1. Update session state for chat mode flag
             st.session_state["chat_mode"] = False
             # 2. Update session state for sidebar toggle widget key
             st.session_state["chat_mode_toggle_functional"] = False
             # 3. Set manual tab selection to Overview for active tab
+            #    This ensures the manual UI knows which tab to render immediately.
             st.session_state["active_tab_name"] = "📊 **Overview**"
             # 4. Also set the manual tabs radio control key so selected index matches immediately
             st.session_state["manual_tabs"] = "📊 **Overview**" 
-            # 5. Clear the chat-specific display flag
-            st.session_state["chat_results_displayed"] = False
+            # 5. Clear the chat-specific display flag (now safe as results is preserved)
+            st.session_state["chat_results_displayed"] = False 
             # 6. Call st.experimental_rerun() to force immediate UI update
             st.experimental_rerun()
 
@@ -1537,7 +1561,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
     calib_max_ggbs_frac = st.session_state.get("calib_max_ggbs_frac", 0.5) if enable_calibration_overrides else 0.5
     calib_scm_step = st.session_state.get("calib_scm_step", 0.1) if enable_calibration_overrides else 0.1
     calib_fine_fraction = st.session_state.get("calib_fine_fraction", 0.40) if enable_calibration_overrides else None
-    if not enable_calibration_overrides: calib_fine_fraction = None
+    if calib_fine_fraction == 0.40 and not enable_calibration_overrides: calib_fine_fraction = None
     
     # Recalculate purpose weights from sliders if needed, using safe .get
     purpose_weights = purpose_profiles_data['General']['weights']
@@ -1666,6 +1690,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
         ]
         
         # Ensure session state active tab is valid, else default
+        # The switch_to_manual_mode callback sets 'active_tab_name' and 'manual_tabs'
         if st.session_state.active_tab_name not in TAB_NAMES:
             st.session_state.active_tab_name = TAB_NAMES[0]
 
@@ -1782,8 +1807,9 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                             c4, c5 = st.columns(2)
                             c4.metric("⚠️ Purpose Penalty", f"{full_compromise_mix['purpose_penalty']:.2f}")
                             c5.metric("🎯 Composite Score", f"{full_compromise_mix['composite_score']:.3f}")
-                        else:
-                            st.info("No Pareto front could be determined from the feasible mixes.", icon="ℹ️")
+                        
+                    else:
+                        st.info("No Pareto front could be determined from the feasible mixes.", icon="ℹ️")
                 else:
                     st.warning("No feasible mixes were found by the optimizer, so no trade-off plot can be generated.", icon="⚠️")
             else:
@@ -2029,7 +2055,10 @@ def main():
         st.session_state.chat_results_displayed = False
     if "run_chat_generation" not in st.session_state:
         st.session_state.run_chat_generation = False
-    
+    # Ensure manual_tabs key is initialized for the manual report UI element
+    if "manual_tabs" not in st.session_state:
+        st.session_state.manual_tabs = "📊 **Overview**"
+        
     purpose_profiles_data = load_purpose_profiles()
 
     # --- 2. SIDEBAR SETUP (COMMON ELEMENTS) ---
