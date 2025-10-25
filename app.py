@@ -450,28 +450,11 @@ def simple_parse(text: str) -> dict:
 
 @st.cache_data(show_spinner="🤖 Parsing prompt with LLM...")
 def parse_user_prompt_llm(prompt_text: str) -> dict:
-    # If LLM not enabled, fallback immediately
+    """
+    Sends user prompt to LLM and returns structured parameter JSON.
+    Must gracefully handle parsing errors or malformed responses.
+    """
     if not st.session_state.get("llm_enabled", False) or client is None:
-        return simple_parse(prompt_text)
-
-    try:
-        resp = client.chat.completions.create(
-            model="mixtral-8x7b-32768",  # ensure this model is correct for your Groq account
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt_text}
-            ],
-            temperature=0.0,
-            response_format={"type": "json_object"},
-        )
-        content = getattr(resp.choices[0].message, "content", None) or resp.choices[0].message.get("content")
-        parsed_json = json.loads(content)
-        # ... same validation/cleaning logic ...
-        return cleaned_data
-    except Exception as e:
-        # Don't call st.error inside a cached function (it can spam). Instead return fallback.
-        # Log to console (or st.write outside the cached function).
-        print(f"LLM Parser Error (falling back to regex): {e}")
         return simple_parse(prompt_text)
 
     system_prompt = f"""
@@ -2089,13 +2072,14 @@ def main():
         # The switch_to_manual_mode callback will correctly set both st.session_state["chat_mode"] = False
         # AND st.session_state["chat_mode_toggle_functional"] = False
         # Reading value from st.session_state.chat_mode ensures state consistency across runs.
-       chat_mode = st.checkbox(
-    f"Chat Mode (toggle)",
-    value=st.session_state.get("chat_mode") if llm_is_ready else False,
-    key="chat_mode_toggle_functional",
-    help="Toggle to switch between conversational and manual input interfaces." if llm_is_ready else "Chat Mode requires a valid GROQ_API_KEY.",
-)
-
+        chat_mode = st.toggle(
+            f"Switch to {'Manual' if is_chat_mode else 'Chat'} Mode",
+            value=st.session_state.get("chat_mode") if llm_is_ready else False, # Ensure we read from the core state variable
+            key="chat_mode_toggle_functional",
+            help="Toggle to switch between conversational and manual input interfaces." if llm_is_ready else "Chat Mode requires a valid GROQ_API_KEY.",
+            disabled=not llm_is_ready,
+            label_visibility="collapsed" # Hide the label as the card provides context
+        )
         st.session_state.chat_mode = chat_mode
         
         # Move the LLM parser toggle into the sidebar if we're in manual mode, for easy access
