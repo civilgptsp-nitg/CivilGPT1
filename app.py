@@ -46,7 +46,7 @@ class CONSTANTS:
         40: {"Zone I": 0.71, "Zone II": 0.69, "Zone III": 0.67, "Zone IV": 0.65}
     }
     FINE_AGG_ZONE_LIMITS = {
-        "Zone I":    {"10.0": (100,100),"4.75": (90,100),"2.36": (60,95),"1.18": (30,70),"0.600": (15,34),"0.300": (5,20),"0.150": (0,10)},
+        "Zone I":     {"10.0": (100,100),"4.75": (90,100),"2.36": (60,95),"1.18": (30,70),"0.600": (15,34),"0.300": (5,20),"0.150": (0,10)},
         "Zone II":    {"10.0": (100,100),"4.75": (90,100),"2.36": (75,100),"1.18": (55,90),"0.600": (35,59),"0.300": (8,30),"0.150": (0,10)},
         "Zone III": {"10.0": (100,100),"4.75": (90,100),"2.36": (85,100),"1.18": (75,90),"0.600": (60,79),"0.300": (12,40),"0.150": (0,10)},
         "Zone IV":    {"10.0": (95,100),"4.75": (95,100),"2.36": (95,100),"1.18": (90,100),"0.600": (80,100),"0.300": (15,50),"0.150": (0,15)},
@@ -1318,11 +1318,11 @@ def run_chat_interface(purpose_profiles_data: dict):
             #    This ensures the manual UI knows which tab to render immediately.
             st.session_state["active_tab_name"] = "📊 **Overview**"
             # 4. Also set the manual tabs radio control key so selected index matches immediately
-            st.session_state["manual_tabs"] = "📊 **Overview**" 
+            st.session_state["manual_tabs"] = "📊 **Overview**"  
             # 5. Clear the chat-specific display flag (now safe as results is preserved)
-            st.session_state["chat_results_displayed"] = False 
-            # 6. Call st.experimental_rerun() to force immediate UI update
-            st.experimental_rerun()
+            st.session_state["chat_results_displayed"] = False  
+            # 6. Call st.rerun() to force immediate UI update
+            st.rerun()
 
 
         st.button(
@@ -1330,7 +1330,7 @@ def run_chat_interface(purpose_profiles_data: dict):
             use_container_width=True,  
             type="primary",
             on_click=switch_to_manual_mode, # Execute state update
-            key="switch_to_manual_btn" 
+            key="switch_to_manual_btn"
         )
         # === END OF FIX ===
 
