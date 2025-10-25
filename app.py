@@ -15,6 +15,7 @@ from functools import lru_cache
 from itertools import product
 import traceback # Added for cleaner error logging
 import uuid # For dynamic key
+import time # Added for time.sleep in a non-rerun scenario if needed
 
 # ==============================================================================
 # PART 1: CONSTANTS & CORE DATA
@@ -1283,23 +1284,29 @@ def run_chat_interface(purpose_profiles_data: dict):
     if st.session_state.get("chat_results_displayed", False):
         st.info("Your full mix report is ready. You can ask for refinements or open the full report.")
 
-        # === START OF FIX (FIRST OCCURRENCE) ===
+        # === START OF FIX (Applied the Required Fixes) ===
         def switch_to_manual_mode():
-            st.session_state.chat_mode = False
-            # Set the active tab name to the Overview tab for immediate focus
-            st.session_state.active_tab_name = "📊 **Overview**"  
-            st.toast("Switching to Manual Mode...", icon="📊")
-            st.rerun()  # 🔥 Force Streamlit to reload and display Manual Mode immediately
-            # ✅ Added st.rerun() fix for mode switch
+            # 1. Update session state for chat mode flag
+            st.session_state["chat_mode"] = False
+            # 2. Update session state for sidebar toggle widget key
+            st.session_state["chat_mode_toggle_functional"] = False
+            # 3. Set manual tab selection to Overview for active tab
+            st.session_state["active_tab_name"] = "📊 **Overview**"
+            # 4. Also set the manual tabs radio control key so selected index matches immediately
+            st.session_state["manual_tabs"] = "📊 **Overview**"
+            # 5. Call st.experimental_rerun() to force immediate UI update
+            # st.toast("Switching to Manual Mode...", icon="📊") # Removed toast as requested (optional)
+            st.experimental_rerun()
+
 
         st.button(
             "📊 Open Full Mix Report & Switch to Manual Mode",  
             use_container_width=True,  
             type="primary",
-            on_click=switch_to_manual_mode, # Execute state update before natural rerun
-            key=f"switch_to_manual_btn_{uuid.uuid4()}" # Dynamic key fix implemented
+            on_click=switch_to_manual_mode, # Execute state update
+            key="switch_to_manual_btn" # FIXED: Changed from dynamic uuid to static key
         )
-        # === END OF FIX (FIRST OCCURRENCE) ===
+        # === END OF FIX ===
 
     # --- Handle new user prompt ---
     if user_prompt := st.chat_input("Ask CivilGPT anything about your concrete mix..."):
@@ -2061,9 +2068,13 @@ def main():
         """, unsafe_allow_html=True)
         
         # The actual Streamlit toggle for functionality
+        # FIX: The toggle must read from the session state key "chat_mode" and use the key "chat_mode_toggle_functional"
+        # The switch_to_manual_mode callback will correctly set both st.session_state["chat_mode"] = False
+        # AND st.session_state["chat_mode_toggle_functional"] = False
+        # Reading value from st.session_state.chat_mode ensures state consistency across runs.
         chat_mode = st.toggle(
             f"Switch to {'Manual' if is_chat_mode else 'Chat'} Mode",
-            value=st.session_state.chat_mode if llm_is_ready else False,
+            value=st.session_state.get("chat_mode") if llm_is_ready else False, # Ensure we read from the core state variable
             key="chat_mode_toggle_functional",
             help="Toggle to switch between conversational and manual input interfaces." if llm_is_ready else "Chat Mode requires a valid GROQ_API_KEY.",
             disabled=not llm_is_ready,
