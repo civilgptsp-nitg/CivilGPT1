@@ -14,6 +14,7 @@ from reportlab.lib.units import inch
 from functools import lru_cache
 from itertools import product
 import traceback # Added for cleaner error logging
+import uuid # For dynamic key
 
 # ==============================================================================
 # PART 1: CONSTANTS & CORE DATA
@@ -1278,74 +1279,27 @@ def run_chat_interface(purpose_profiles_data: dict):
         st.session_state.chat_results_displayed = True
         st.rerun() # Rerun to display the new summary message
 
-    # --- Show "Open Report" button if results are ready ---
+    # --- Show "Open Report" button if results are ready (FIRST OCCURRENCE) ---
     if st.session_state.get("chat_results_displayed", False):
         st.info("Your full mix report is ready. You can ask for refinements or open the full report.")
 
-        # === START OF FIX ===
+        # === START OF FIX (FIRST OCCURRENCE) ===
         def switch_to_manual_mode():
             st.session_state.chat_mode = False
             # Set the active tab name to the Overview tab for immediate focus
-            st.session_state.active_tab_name = "📊 **Overview**" 
+            st.session_state.active_tab_name = "📊 **Overview**"  
             st.toast("Switching to Manual Mode...", icon="📊")
-            st.rerun()  # 🔥 Force rerun to immediately load Manual Mode
+            st.rerun()  # 🔥 Force Streamlit to reload and display Manual Mode immediately
+            # ✅ Added st.rerun() fix for mode switch
 
         st.button(
-            "📊 Open Full Mix Report & Switch to Manual Mode", 
-            use_container_width=True, 
+            "📊 Open Full Mix Report & Switch to Manual Mode",  
+            use_container_width=True,  
             type="primary",
             on_click=switch_to_manual_mode, # Execute state update before natural rerun
-            key="switch_to_manual_btn"
+            key=f"switch_to_manual_btn_{uuid.uuid4()}" # Dynamic key fix implemented
         )
-        # === END OF FIX ===
-
-    # --- Handle new user prompt ---
-    if user_prompt := st.chat_input("Ask CivilGPT anything about your concrete mix..."):
-        st.session_state.chat_history.append({"role": "user", "content": user_prompt})
-        
-        parsed_params = parse_user_prompt_llm(user_prompt)
-        
-        if parsed_params:
-            st.session_state.chat_inputs.update(parsed_params)
-            parsed_summary = ", ".join([f"**{k}**: {v}" for k, v in parsed_params.items()])
-            st.session_state.chat_history.append({"role": "assistant", "content": f"Got it. Understood: {parsed_summary}"})
-
-        missing_fields = [f for f in CONSTANTS.CHAT_REQUIRED_FIELDS if st.session_state.chat_inputs.get(f) is None]
-        
-        if missing_fields:
-            field_to_ask = missing_fields[0]
-            question = get_clarification_question(field_to_ask)
-            st.session_state.chat_history.append({"role": "assistant", "content": question})
-        
-        else:
-            # All fields are present! Trigger generation.
-            st.session_state.chat_history.append({"role": "assistant", "content": "✅ Great, I have all your requirements. Generating your sustainable mix design now..."})
-            st.session_state.run_chat_generation = True
-            st.session_state.chat_results_displayed = False # Reset flag for new results
-            if "results" in st.session_state:
-                del st.session_state.results # Clear old results
-        
-        st.rerun()
-
-    # --- Show "Open Report" button if results are ready ---
-    if st.session_state.get("chat_results_displayed", False):
-        st.info("Your full mix report is ready. You can ask for refinements or open the full report.")
-
-        # === START OF FIX ===
-        def switch_to_manual_mode():
-            st.session_state.chat_mode = False
-            # Set the active tab name to the Overview tab for immediate focus
-            st.session_state.active_tab_name = "📊 **Overview**" 
-            st.toast("Switching to Manual Mode...", icon="📊")
-
-        st.button(
-            "📊 Open Full Mix Report & Switch to Manual Mode", 
-            use_container_width=True, 
-            type="primary",
-            on_click=switch_to_manual_mode, # Execute state update before natural rerun
-            key="switch_to_manual_btn"
-        )
-        # === END OF FIX ===
+        # === END OF FIX (FIRST OCCURRENCE) ===
 
     # --- Handle new user prompt ---
     if user_prompt := st.chat_input("Ask CivilGPT anything about your concrete mix..."):
