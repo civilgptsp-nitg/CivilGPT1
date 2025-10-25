@@ -755,12 +755,12 @@ def _get_material_factors(materials_list, emissions_df, costs_df):
     return final_co2, final_cost
 
 def generate_mix(grade, exposure, nom_max, target_slump, agg_shape, 
-                 fine_zone, emissions, costs, cement_choice, material_props, 
-                 use_sp=True, sp_reduction=0.18, optimize_cost=False, 
-                 wb_min=0.35, wb_steps=6, max_flyash_frac=0.3, max_ggbs_frac=0.5, 
-                 scm_step=0.1, fine_fraction_override=None,
-                 purpose='General', purpose_profile=None, purpose_weights=None,
-                 enable_purpose_optimization=False, st_progress=None):
+                  fine_zone, emissions, costs, cement_choice, material_props, 
+                  use_sp=True, sp_reduction=0.18, optimize_cost=False, 
+                  wb_min=0.35, wb_steps=6, max_flyash_frac=0.3, max_ggbs_frac=0.5, 
+                  scm_step=0.1, fine_fraction_override=None,
+                  purpose='General', purpose_profile=None, purpose_weights=None,
+                  enable_purpose_optimization=False, st_progress=None):
 
     # --- 1. Setup Parameters ---
     if st_progress: st_progress.progress(0.0, text="Initializing parameters...")
@@ -1259,6 +1259,7 @@ def run_chat_interface(purpose_profiles_data: dict):
             st.markdown(msg["content"])
 
     # --- Display generated results summary in chat ---
+    # This block triggers the display of the summary and the 'Open Full Report' button
     if "results" in st.session_state and st.session_state.results.get("success") and not st.session_state.get("chat_results_displayed", False):
         results = st.session_state.results
         opt_meta, base_meta = results["opt_meta"], results["base_meta"]
@@ -1280,11 +1281,11 @@ def run_chat_interface(purpose_profiles_data: dict):
         st.session_state.chat_results_displayed = True
         st.rerun() # Rerun to display the new summary message
 
-    # --- Show "Open Report" button if results are ready (FIRST OCCURRENCE) ---
+    # --- Show "Open Report" button if results are ready (SECOND OCCURRENCE) ---
     if st.session_state.get("chat_results_displayed", False):
         st.info("Your full mix report is ready. You can ask for refinements or open the full report.")
 
-        # === START OF FIX (Applied the Required Fixes) ===
+        # === START OF FIX (The core bug fix) ===
         def switch_to_manual_mode():
             # 1. Update session state for chat mode flag
             st.session_state["chat_mode"] = False
@@ -1293,9 +1294,10 @@ def run_chat_interface(purpose_profiles_data: dict):
             # 3. Set manual tab selection to Overview for active tab
             st.session_state["active_tab_name"] = "📊 **Overview**"
             # 4. Also set the manual tabs radio control key so selected index matches immediately
-            st.session_state["manual_tabs"] = "📊 **Overview**"
-            # 5. Call st.experimental_rerun() to force immediate UI update
-            # st.toast("Switching to Manual Mode...", icon="📊") # Removed toast as requested (optional)
+            st.session_state["manual_tabs"] = "📊 **Overview**" 
+            # 5. Clear the chat-specific display flag
+            st.session_state["chat_results_displayed"] = False
+            # 6. Call st.experimental_rerun() to force immediate UI update
             st.experimental_rerun()
 
 
@@ -1304,7 +1306,7 @@ def run_chat_interface(purpose_profiles_data: dict):
             use_container_width=True,  
             type="primary",
             on_click=switch_to_manual_mode, # Execute state update
-            key="switch_to_manual_btn" # FIXED: Changed from dynamic uuid to static key
+            key="switch_to_manual_btn" 
         )
         # === END OF FIX ===
 
@@ -1780,8 +1782,8 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                             c4, c5 = st.columns(2)
                             c4.metric("⚠️ Purpose Penalty", f"{full_compromise_mix['purpose_penalty']:.2f}")
                             c5.metric("🎯 Composite Score", f"{full_compromise_mix['composite_score']:.3f}")
-                    else:
-                        st.info("No Pareto front could be determined from the feasible mixes.", icon="ℹ️")
+                        else:
+                            st.info("No Pareto front could be determined from the feasible mixes.", icon="ℹ️")
                 else:
                     st.warning("No feasible mixes were found by the optimizer, so no trade-off plot can be generated.", icon="⚠️")
             else:
@@ -2068,10 +2070,7 @@ def main():
         """, unsafe_allow_html=True)
         
         # The actual Streamlit toggle for functionality
-        # FIX: The toggle must read from the session state key "chat_mode" and use the key "chat_mode_toggle_functional"
-        # The switch_to_manual_mode callback will correctly set both st.session_state["chat_mode"] = False
-        # AND st.session_state["chat_mode_toggle_functional"] = False
-        # Reading value from st.session_state.chat_mode ensures state consistency across runs.
+        # The toggle must read from the session state key "chat_mode" and use the key "chat_mode_toggle_functional"
         chat_mode = st.toggle(
             f"Switch to {'Manual' if is_chat_mode else 'Chat'} Mode",
             value=st.session_state.get("chat_mode") if llm_is_ready else False, # Ensure we read from the core state variable
@@ -2102,9 +2101,6 @@ def main():
             st.rerun()
         st.sidebar.markdown("---")
 
-    # OLD LOCATION: Removed Material Libraries (Shared) section from sidebar
-    # The session state keys (materials_csv, emissions_csv, cost_csv) remain for global functionality.
-    
     # The file uploaders are now inside the Advanced Manual Input expander in run_manual_interface.
     # We must call load_data here (before either interface is run) to ensure the DFs are available.
     materials_df, emissions_df, costs_df = load_data(
