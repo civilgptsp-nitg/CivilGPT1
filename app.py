@@ -1317,7 +1317,7 @@ def run_chat_interface(purpose_profiles_data: dict):
             #    This ensures the manual UI knows which tab to render immediately.
             st.session_state["active_tab_name"] = "📊 **Overview**"
             # 4. Also set the manual tabs radio control key so selected index matches immediately
-            st.session_state["manual_tabs_radio"] = "📊 **Overview**"  # FIX: Use the new radio key
+            st.session_state["manual_tabs"] = "📊 **Overview**"  
             # 5. Clear the chat-specific display flag (now safe as results is preserved)
             st.session_state["chat_results_displayed"] = False  
             # 6. Call st.rerun() to force immediate UI update
@@ -1689,7 +1689,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
         ]
         
         # Ensure session state active tab is valid, else default
-        # The switch_to_manual_mode callback sets 'active_tab_name' and 'manual_tabs_radio'
+        # The switch_to_manual_mode callback sets 'active_tab_name' and 'manual_tabs'
         if st.session_state.active_tab_name not in TAB_NAMES:
             st.session_state.active_tab_name = TAB_NAMES[0]
 
@@ -1707,7 +1707,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
             index=default_index,
             horizontal=True,
             label_visibility="collapsed",
-            key="manual_tabs_radio" # FIX: Changed key from 'manual_tabs' to 'manual_tabs_radio'
+            key="manual_tabs_radio" # FIX: Changed key to avoid collision with st.session_state.active_tab_name logic
         )
         
         # Update the session state variable for next time
@@ -2054,7 +2054,8 @@ def main():
         st.session_state.chat_results_displayed = False
     if "run_chat_generation" not in st.session_state:
         st.session_state.run_chat_generation = False
-    # Ensure manual_tabs_radio key is initialized for the manual report UI element
+    # Ensure manual_tabs key is initialized for the manual report UI element
+    # FIX: The old 'manual_tabs' key from the original code which was conflicting is now renamed
     if "manual_tabs_radio" not in st.session_state:
         st.session_state.manual_tabs_radio = "📊 **Overview**"
         
