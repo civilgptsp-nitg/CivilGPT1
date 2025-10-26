@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -664,8 +665,24 @@ def compute_purpose_penalty_vectorized(df: pd.DataFrame, purpose_profile: dict) 
     penalty += ((400 - fines_content_series).clip(lower=0) * 0.5 * (sf_frac_series > 0))
     
     # 8. Priority-based penalties
-    # Strength efficiency penalty
-    strength_efficiency_series = df['fck_target'] / (df['binder'] / 100).replace(0, 1)
+    # Strength efficiency penalty - FIXED: Use grade strength instead of fck_target
+    # Calculate fck_target from grade if not available
+    if 'fck_target' not in df.columns and 'grade' in df.columns:
+        # Extract grade from the first row if available, or use default
+        try:
+            grade_str = df['grade'].iloc[0] if len(df) > 0 else "M30"
+            fck_value = CONSTANTS.GRADE_STRENGTH.get(grade_str, 30.0)
+            S_value = CONSTANTS.QC_STDDEV.get("Good", 5.0)
+            fck_target_value = fck_value + 1.65 * S_value
+            strength_efficiency_series = pd.Series(fck_target_value, index=df.index) / (df['binder'] / 100).replace(0, 1)
+        except:
+            strength_efficiency_series = pd.Series(0.3, index=df.index)
+    elif 'fck_target' in df.columns:
+        strength_efficiency_series = df['fck_target'] / (df['binder'] / 100).replace(0, 1)
+    else:
+        # Fallback: use a default strength efficiency
+        strength_efficiency_series = pd.Series(0.3, index=df.index)
+    
     penalty += ((0.3 - strength_efficiency_series).clip(lower=0) * 500 * strength_weight)
     
     # Durability penalty
@@ -2698,7 +2715,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                         ax.set_title("Lab Strength vs. Predicted Target Strength"); ax.legend(); ax.grid(True)
                         st.pyplot(fig)
                     else:
-                        st.warning("Could not process the uploaded lab data CSV. Please check the file format, column names, and ensure it contains valid data.", icon="⚠️")
+                        st.warning("Could not process the uploaded lab data CSV. Please check the file format, column names and ensure it contains valid data.", icon="⚠️")
                 except Exception as e:
                     st.error(f"Failed to read or process the lab data CSV file: {e}", icon="💥")
             else:
