@@ -1,76 +1,86 @@
 {
   "General": {
-    "description": "IS 456 compliant balanced mix for general applications",
+    "description": "IS 456:2000 compliant balanced mix for general applications",
     "wb_limit": 0.55,
     "scm_limit": 0.35,
-    "min_binder": 320,
+    "min_binder": 300,
     "weights": {"co2": 0.4, "cost": 0.4, "purpose": 0.2},
     "hard_constraints": {
-      "min_grade": "M25",
+      "min_grade": "M20",
       "max_scm_ratio": 0.35
     },
     "target_ranges": {
       "scm_min": 0.1,
       "scm_max": 0.35,
       "w_b_max": 0.55
-    }
+    },
+    "target_metrics": ["estimated_modulus_proxy", "shrinkage_risk_index"]
   },
   "Slab": {
-    "description": "IS compliant slab design with workability focus",
+    "description": "IS 456:2000 compliant slab design with workability focus",
     "wb_limit": 0.50,
     "scm_limit": 0.30,
     "min_binder": 300,
     "weights": {"co2": 0.3, "cost": 0.5, "purpose": 0.2},
     "hard_constraints": {
       "min_grade": "M25",
-      "min_slump": 100,
-      "max_wb_ratio": 0.50
+      "min_slump": 75,
+      "max_wb_ratio": 0.50,
+      "max_deflection_proxy": 0.02,
+      "min_modulus": 25000
     },
     "target_ranges": {
-      "slump_min": 100,
+      "slump_min": 75,
       "slump_max": 150,
       "scm_min": 0.15,
       "scm_max": 0.30
-    }
+    },
+    "target_metrics": ["estimated_modulus_proxy", "deflection_proxy", "shrinkage_risk_index"]
   },
   "Beam": {
-    "description": "IS compliant beam design for strength and durability",
+    "description": "IS 456:2000 compliant beam design for strength and durability",
     "wb_limit": 0.45,
     "scm_limit": 0.25,
-    "min_binder": 340,
+    "min_binder": 320,
     "weights": {"co2": 0.4, "cost": 0.2, "purpose": 0.4},
     "hard_constraints": {
       "min_grade": "M30",
-      "min_cementitious": 340,
-      "max_wb_ratio": 0.45
+      "min_cementitious": 320,
+      "max_wb_ratio": 0.45,
+      "max_shrinkage_risk": 15.0,
+      "min_modulus": 27386
     },
     "target_ranges": {
       "fck_min": 30,
       "fck_max": 40,
       "scm_min": 0.10,
       "scm_max": 0.25
-    }
+    },
+    "target_metrics": ["estimated_modulus_proxy", "shrinkage_risk_index", "axial_capacity_proxy"]
   },
   "Column": {
-    "description": "IS compliant column design for high compressive strength",
+    "description": "IS 456:2000 compliant column design for high compressive strength",
     "wb_limit": 0.40,
     "scm_limit": 0.20,
-    "min_binder": 360,
+    "min_binder": 340,
     "weights": {"co2": 0.3, "cost": 0.2, "purpose": 0.5},
     "hard_constraints": {
       "min_grade": "M35",
-      "min_cementitious": 360,
-      "max_wb_ratio": 0.40
+      "min_cementitious": 340,
+      "max_wb_ratio": 0.40,
+      "max_shrinkage_risk": 12.0,
+      "min_modulus": 27386
     },
     "target_ranges": {
       "fck_min": 35,
       "fck_max": 50,
       "scm_min": 0.05,
       "scm_max": 0.20
-    }
+    },
+    "target_metrics": ["estimated_modulus_proxy", "axial_capacity_proxy", "shrinkage_risk_index"]
   },
   "Pavement": {
-    "description": "IS compliant pavement for durability and flexural strength",
+    "description": "IS 456:2000 & IRC 58 compliant pavement for durability and flexural strength",
     "wb_limit": 0.45,
     "scm_limit": 0.25,
     "min_binder": 340,
@@ -78,31 +88,38 @@
     "hard_constraints": {
       "min_grade": "M30",
       "min_cementitious": 340,
-      "max_wb_ratio": 0.45
+      "max_wb_ratio": 0.45,
+      "min_flexural_strength": 4.0,
+      "fatigue_proxy_min": 0.7,
+      "max_wb_for_frost": 0.45
     },
     "target_ranges": {
       "fck_min": 30,
-      "fck_max": 35,
+      "fck_max": 40,
       "scm_min": 0.15,
       "scm_max": 0.25
-    }
+    },
+    "target_metrics": ["pavement_fatigue_proxy", "flexural_strength_proxy", "estimated_modulus_proxy"]
   },
   "RPC/HPC": {
-    "description": "IS compliant high-performance concrete",
-    "wb_limit": 0.35,
+    "description": "IS 456:2000 compliant high-performance concrete (M60-M100)",
+    "wb_limit": 0.30,
     "scm_limit": 0.15,
     "min_binder": 450,
     "weights": {"co2": 0.4, "cost": 0.1, "purpose": 0.5},
     "hard_constraints": {
       "min_grade": "M60",
       "min_cementitious": 450,
-      "max_wb_ratio": 0.35
+      "max_wb_ratio": 0.30,
+      "min_sp_dosage": 0.015,
+      "min_fines_content": 400
     },
     "target_ranges": {
       "fck_min": 60,
       "fck_max": 100,
       "scm_min": 0.05,
       "scm_max": 0.15
-    }
+    },
+    "target_metrics": ["hpc_strength_efficiency", "pumpability_assessment", "estimated_modulus_proxy"]
   }
 }
