@@ -1,5 +1,3 @@
-
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -858,7 +856,8 @@ def get_compliance_reasons_vectorized(df: pd.DataFrame, exposure: str) -> pd.Ser
     # HPC-specific vectorized reasons
     sf_frac_series = df.get('sf_frac', pd.Series(0.0, index=df.index))
     sp_frac_series = df['sp'] / df['binder'].replace(0, 1)
-    fines_content_series = df['fine'] + df['binder'] * sf_frac_series
+    # FIX: Use 'fine_wet' instead of 'fine' - this was the root cause of the KeyError
+    fines_content_series = df['fine_wet'] + df['binder'] * sf_frac_series
     
     reasons += np.where(
         (sf_frac_series > 0) & (sp_frac_series < 0.015),
