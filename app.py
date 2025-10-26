@@ -1699,7 +1699,7 @@ def run_manual_interface(materials_df: pd.DataFrame, emissions_df: pd.DataFrame,
                         ax.plot(opt_meta['cost_total'], opt_meta['co2_total'], '*', markersize=15, color='red', label=f'Chosen Mix ({optimize_for_label})', zorder=3)
                         ax.plot(best_compromise_mix['cost'], best_compromise_mix['co2'], 'D', markersize=10, color='green', label='Best Compromise (from slider)', zorder=3)
                         ax.set_xlabel("Material Cost (₹/m³)"); ax.set_ylabel("Embodied Carbon (kg CO₂e / m³)")
-                        ax.set_title("Pareto Front of Feasible Concrete Mixes"); ax.grid(True, linestyle='--', alpha=0.6); ax.legend()
+                        ax.set_title("Pareto Front of Feasible Concrete Mixes"); ax.legend(); ax.grid(True)
                         st.pyplot(fig)
 
                         st.markdown("---")
