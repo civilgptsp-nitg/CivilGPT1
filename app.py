@@ -1,3 +1,86 @@
+[file name]: CivilGPT_Feature_Pseudocode.pdf
+[file content begin]
+===== Page 1 =====
+
+# CivilGPT - Feature Implementation Pseudocode
+
+CivilGPT - Feature Implementation Pseudocode New Features: 1. Expanded Concrete Grade Range 2. High Performance Concrete (HPC) Support 3. Purpose-Based Mix Optimization (pavement, beam, slab, column, etc.) Prepared for: Developer & Team Reference
+
+1. Overview - Goal: Extend CivilGPT to support more concrete grades, include High-Performance Concrete (HPC) options, and accept a 'purpose' input (pavement, beam, slab, column, foundation, precast, etc.) so the optimizer can apply purpose-specific constraints and objective adjustments. - Maintain IS-code compliance (IS 10262 & IS 456) while adding configurable purpose-specific constraints and optional HPC workflows (higher strengths, reduced w/b, silica fume, etc.).
+
+2. High-level Data Structures - PURPOSE_PROFILE: dict mapping purpose -> profile (constraints & objective weights) e.g., { "slab": {"target_serviceability": "deflection_limit", "min_modulus": None, "traffic_loading": None, "preferred_wb_max": 0.50, "durability_emphasis": 0.3, "strength_emphasis": 0.2, "cost_emphasis": 0.5}, "pavement": {"fatigue_factor": X, "min_cbr_adj": Y, "durability_emphasis": 0.6, "strength_emphasis": 0.2, "cost_emphasis": 0.2}, "beam": {...}, "column": {...}, "precast": {...} } - HPC_OPTIONS: dict of HPC-specific materials and typical dosages e.g., {"silica Fume": {"max_frac":0.10, "co2_factor":..., "cost_factor":...}, ...} - GRADE_EXTENSIONS: extended mapping of grades -> properties (allowing > M50 if needed) - PURPOSE_METRICS: records to store purpose-evaluation outputs (e.g., modulus, shrinkage risk, fatigue life estimate)
+
+3. UI Changes (Streamlit) - Add "Purpose" selectbox in sidebar with choices: ["General", "Pavement", "Slab", "Beam", "Column", "Foundation", "Precast", "RPC/HPC"] - Add "Enable HPC" toggle (only active if purpose supports or user chooses) and selectable HPC options (Silica Fume, Very Low w/b presets) - Add "Target Performance" optional inputs (e.g., target flexural strength for pavement, max deflection for slab) - Add "Advanced constraints" expander containing per-purpose knobs (emphasis weights, durability vs cost) - Expose new calibration parameters for HPC (e.g., silica fume density, water demand multiplier, SP sensitivity)
+
+4. Backend: New or Modified Helpers - function: load_purpose_profiles(filepath=None): - if file provided, load purpose-specific profiles from CSV/JSON else use built-in defaults - validate fields and fall back to safe defaults if missing - function: adjust_water_for_HPC(base_water, hpc_options, sp_effectiveness): - apply additional water demand multipliers for HPC admixtures (e.g., silica fume increases water demand) - account for SP effectiveness (PCE) and recommend higher SP dosages if silica fume present - function: compute_purpose_penalty(meta, purpose_profile): - Evaluate key purpose-related penalties: - durability_penalty = f(max_wb_exceedance, min_cement_requirement, exposure) - structural_penalty = f(target_strength_miss, modulus_shortfall, fatigue_estimate) - constructability_penalty = f(placement_difficulty, pumpability issues) - Return composite penalty (to be added to objective)
+
+===== Page 2 =====
+
+- function: evaluate_purpose_specific_metrics(mix_meta, purpose): - Compute approximate metrics
+needed for purpose evaluation, e.g.: - Est. Young's Modulus E = alpha *
+sqrt(mean_strength)
+(empirical) - Shrinkage risk index = function of cementitious content and water content
+- Fatigue life proxy for pavements = function of w/b and binder composition - Return
+purpose_metrics
+dict
+
+5. Optimization: Integrate Purpose into Objective - Existing objectives: minimize CO2 OR minimize Cost
+subject to feasibility - New objective formulation (composite): - objective = w_co2 *
+norm(CO2) +
+w_cost * norm(Cost) + w_purpose * norm(PurposePenalty) - w_* are weights chosen from PURPOSE_PROFILE or UI sliders - Algorithm changes in generate_mix: - Accept new params: purpose,
+purpose_profile,
+hpc_options, purpose_weights - During candidate evaluation: - compute mix as before (binder,
+aggregates, moisture correction) - call evaluate_mix() to get CO2 and cost - call evaluate_purpose_specific_metrics() -> purpose_metrics - call compute_purpose_penalty(meta,
+purpose_profile) -> purpose_penalty - compute composite_score = weighted sum as above (or use multi-objective ranking) - Decide feasibility: mix must pass IS-code checks AND
+purpose-specific hard constraints (e.g., minimum modulus if specified) - Add candidate to trace with additional fields:
+purpose_penalty, purpose_metrics, composite_score
+
+6. HPC Support - When user enables HPC: - Expand SCM search space to include Silica Fume (SP) and higher GGBS limit if desired - Apply special constraints: - Min binder strength increased for HPC grades - Allow w/b ratios to go lower (e.g., 0.25 - 0.40) but ensure SP is available and SP dosage bounds are widened - Apply silica fume water demand multiplier and increase SP recommendation - Validate mix for pumpability: ensure fines content and SP within acceptable range
+- Add pre-check: does the local materials library include silica fume CO2 and cost? If not, warn user and use placeholders
+
+7. Purpose Profiles: Example Defaults - Pavement: - durability_emphasis: 0.6,
+strength_emphasis: 0.2, cost_emphasis: 0.2 - hard constraints: min_flexural_strength (if provided),
+fatigue_proxy_min,
+max_wb_for_frost - Slab: - durability_emphasis: 0.2, strength_emphasis: 0.3,
+cost_emphasis: 0.5
+- hard constraints: max_deflection_proxy, min_modulus (if target supplied) - Beam/Column: -
+durability_emphasis: 0.3, strength_emphasis: 0.4, cost_emphasis: 0.3 - hard constraints: min_compressive_strength (as usual), max_shrinkage_risk
+
+8. Data Validation & Reporting - Extend trace CSV and reports to include purpose,
+purpose_metrics,
+purpose_penalty, hpc_flags, hpc_components - Update PDF generator to include a "Purpose Analysis" section with metrics and explanation of penalties, trade-offs, and recommended mix tweaks for the chosen purpose
+
+9. Backwards Compatibility - If purpose == "General" or None: behave exactly as before (legacy mode) -
+If "Enable HPC" is false, restrict new HPC materials from being used - Ensure all old API calls and CLI behaviors remain unchanged unless explicit new flags are set
+
+10. Unit Tests & Validation Cases (essential) - Test 1: Existing baseline behavior unchanged for default
+
+===== Page 3 =====
+
+(General) purpose - Test 2: Pavement purpose: verify mixes produced have higher durability emphasis and pass fatigue proxy checks - Test 3: Beam purpose: verify strength-emphasis increases binder or lowers w/b where possible - Test 4: HPC workflow: silica fume mixes generate higher SP and adjusted water; check feasibility & warnings - Test 5: Missing material data: placeholder fallback and clear user warnings (do not crash) - Test 6: Pareto front: verify multi-objective ranking includes purpose_penalty and slider compromises still work
+
+11. Integration Pseudocode (detailed) - generate_mix (new signature) function generate_mix(..., purpose='General', purpose_profile=None, enable_hpc=False, hpc_options=None, purpose_weights=None, **kwargs): - load purpose_profile = load_purpose_profiles() if None - weights = purpose_profile.get('weights') or purpose_weights or defaults - set search ranges for wb, flyash, ggbs as before - if enable_hpc: - include silica_fume_range in scm search space - increase allowable sp upper limit and adjust water multipliers - for each wb in wb_values: for each flyash_frac in flyash_options: for each ggbs_frac in ggbs_options: for each sf_frac in silica_fume_options (if HPC enabled) OR sf_frac=0: if flyash + ggbs + sf > 0.5 (or purpose_profile.max_scm) -> continue compute binder, cement, sp as before (adjust for sf water demand) compute aggregates using get_coarse_agg_fraction(...) (unchanged) apply moisture corrections compute water_final mix = {...} # materials and quantities df = evaluate_mix(mix, emissions_df, costs_df) co2_total, cost_total = sum(df.CO2...), sum(df.Cost...) # Purpose-specific metrics purpose_metrics = evaluate_purpose_specific_metrics(candidate_meta, purpose) purpose_penalty = compute_purpose_penalty(candidate_meta, purpose_profile) # Composite objective (normalize inside loop or on-the-fly) composite_score = weights['co2']*norm(co2_total) + weights['cost']*norm(cost_total) + weights['purpose']*norm(purpose_penalty) feasible = check_feasibility(df, candidate_meta, exposure) AND pass purpose hard constraints append to trace with additional fields: purpose, sf_frac, purpose_penalty, purpose_metrics, composite_score, feasible if feasible and composite_score < best_score: update best_df, best_meta, best_score return best_df, best_meta, trace
+
+12. Notes on Normalization and Scaling - Normalization: to combine CO2, cost, and penalty, maintain running min/max in the search loop or pre-compute approximations; otherwise compute norms on collected trace after generation (two-stage selection): - Stage 1: enumerate feasible mixes, collect raw metrics - Stage 2: normalize metrics across feasible mixes and compute composite scores for ranking - Use Pareto-front selection as alternate multi-objective strategy; allow user to pick compromise on Pareto with purpose_penalty included
+
+13. UX & Help Text Additions - Add concise help tooltips explaining purpose profiles and HPC trade-offs - Add warnings when HPC requested but local library misses key entries (silica fume CO2/cost) - Provide recommended SP dosage and placement notes for HPC mixes in PDF report
+
+14. Deployment & Config - Add new environment flags for max HPC usage (safety) - Add sample purpose_profiles.json in repo and docs - Update CI tests to include new unit tests and integration checks
+
+15. Example Purpose-Specific Rule: Pavement fatigue proxy - fatigue_proxy = function(w_b, binder, aggregate_quality, traffic_category) - require fatigue_proxy >= threshold_for_traffic_category
+
+===== Page 4 =====
+
+16. Example Minimal Implementation Timeline (suggested) - Week 1: UI changes, data structures, default
+purpose profiles - Week 2: Backend metrics functions, purpose penalty functions, unit tests - Week 3:
+HPC support (silica fume), SP adjustments, validations - Week 4: Pareto integration, reports update,
+polish and judge-readiness
+
+End of pseudocode
+
+
+[file content end]
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -81,14 +164,35 @@ class CONSTANTS:
         "Beam": {"description": "Prioritizes strength (modulus) and durability. Often heavily reinforced.", "wb_limit": 0.50, "scm_limit": 0.4, "min_binder": 320, "weights": {"co2": 0.4, "cost": 0.2, "purpose": 0.4}},
         "Column": {"description": "Prioritizes high compressive strength and durability. Congestion is common.", "wb_limit": 0.45, "scm_limit": 0.35, "min_binder": 340, "weights": {"co2": 0.3, "cost": 0.2, "purpose": 0.5}},
         "Pavement": {"description": "Prioritizes durability, flexural strength (fatigue), and abrasion resistance. Cost is a major factor.", "wb_limit": 0.45, "scm_limit": 0.4, "min_binder": 340, "weights": {"co2": 0.3, "cost": 0.4, "purpose": 0.3}},
-        "Precast": {"description": "Prioritizes high early strength (for form stripping), surface finish, and cost (reproducibility).", "wb_limit": 0.45, "scm_limit": 0.3, "min_binder": 360, "weights": {"co2": 0.2, "cost": 0.5, "purpose": 0.3}}
+        "Precast": {"description": "Prioritizes high early strength (for form stripping), surface finish, and cost (reproducibility).", "wb_limit": 0.45, "scm_limit": 0.3, "min_binder": 360, "weights": {"co2": 0.2, "cost": 0.5, "purpose": 0.3}},
+        "RPC/HPC": {"description": "High-Performance Concrete with silica fume, very low w/b ratios, and high strength (>M60).", "wb_limit": 0.35, "scm_limit": 0.25, "min_binder": 450, "weights": {"co2": 0.4, "cost": 0.1, "purpose": 0.5}}
     }
+    
+    # HPC Options
+    HPC_OPTIONS = {
+        "silica_fume": {
+            "max_frac": 0.10,
+            "water_demand_multiplier": 1.05,
+            "sp_effectiveness_boost": 1.2,
+            "co2_factor": 0.1,
+            "cost_factor": 15.0,
+            "density": 2200.0
+        }
+    }
+    
+    # HPC-specific constraints
+    HPC_WB_RANGE = (0.25, 0.40)
+    HPC_MIN_BINDER_STRENGTH = 60  # MPa
+    HPC_SP_MAX_LIMIT = 0.03  # 3% of binder content
+    HPC_MIN_FINES_CONTENT = 400  # kg/m³ for pumpability
+    
     CEMENT_TYPES = ["OPC 33", "OPC 43", "OPC 53", "PPC"]
     
     # Normalized names for vectorized computation
     NORM_CEMENT = "cement"
     NORM_FLYASH = "fly ash"
     NORM_GGBS = "ggbs"
+    NORM_SILICA_FUME = "silica fume"
     NORM_WATER = "water"
     NORM_SP = "pce superplasticizer"
     NORM_FINE_AGG = "fine aggregate"
@@ -166,6 +270,7 @@ def _normalize_material_value(s: str) -> str:
         "20 coarse": CONSTANTS.NORM_COARSE_AGG, "20": CONSTANTS.NORM_COARSE_AGG, "coarse aggregate": CONSTANTS.NORM_COARSE_AGG,
         "20mm": CONSTANTS.NORM_COARSE_AGG, "pce superplasticizer": CONSTANTS.NORM_SP,
         "pce superplasticiser": CONSTANTS.NORM_SP, "pce": CONSTANTS.NORM_SP,
+        "silica fume": CONSTANTS.NORM_SILICA_FUME, "microsilica": CONSTANTS.NORM_SILICA_FUME,
         "opc 33": "opc 33", "opc 43": "opc 43", "opc 53": "opc 53", "ppc": "ppc",
         "fly ash": CONSTANTS.NORM_FLYASH, "ggbs": CONSTANTS.NORM_GGBS, "water": CONSTANTS.NORM_WATER,
     }
@@ -211,176 +316,74 @@ def _minmax_scale(series: pd.Series) -> pd.Series:
 def load_purpose_profiles(filepath=None):
     return CONSTANTS.PURPOSE_PROFILES
 
-# ==============================================================================
-# NEW HELPER FUNCTIONS FOR HPC & PURPOSE OPTIMIZATION
-# ==============================================================================
+def adjust_water_for_HPC(base_water: float, sf_frac: float, hpc_options: dict) -> float:
+    """Apply water demand multipliers for HPC admixtures"""
+    if sf_frac > 0:
+        multiplier = hpc_options["silica_fume"]["water_demand_multiplier"]
+        return base_water * (1 + (multiplier - 1) * sf_frac)
+    return base_water
 
-def adjust_water_for_HPC(base_water: float, grade: str, use_sp: bool) -> float:
-    """
-    Adjusts water content for High-Performance Concrete (HPC) mixes based on grade and superplasticizer usage.
-    
-    For grades ≥ M60, reduce water by:
-    - 5% if M60–M70
-    - 8% if M80–M90  
-    - 10% if M100
-    
-    If use_sp is True, apply an additional 3% reduction.
-    
-    Returns the adjusted water content.
-    """
-    grade_num = int(grade[1:])  # Extract numeric part from grade string (e.g., "M60" -> 60)
-    
-    if grade_num < 60:
-        return base_water  # No adjustment for non-HPC grades
-    
-    # Base reduction based on grade
-    if 60 <= grade_num <= 70:
-        reduction = 0.05
-    elif 80 <= grade_num <= 90:
-        reduction = 0.08
-    elif grade_num >= 100:
-        reduction = 0.10
-    else:
-        reduction = 0.0
-    
-    # Additional reduction for superplasticizer
-    if use_sp:
-        reduction += 0.03
-    
-    adjusted_water = base_water * (1 - reduction)
-    return float(adjusted_water)
+def adjust_sp_for_HPC(base_sp: float, sf_frac: float, hpc_options: dict) -> float:
+    """Increase SP dosage for silica fume mixes"""
+    if sf_frac > 0:
+        boost = hpc_options["silica_fume"]["sp_effectiveness_boost"]
+        return base_sp * boost
+    return base_sp
 
-def evaluate_purpose_specific_metrics(mix_data: dict, purpose: str) -> dict:
-    """
-    Evaluates purpose-fit metrics (strength adequacy, durability index, stiffness, etc.) for a given mix.
+def check_hpc_pumpability(fines_content: float, sp_content: float, binder_content: float) -> tuple:
+    """Validate HPC mix for pumpability"""
+    min_fines = CONSTANTS.HPC_MIN_FINES_CONTENT
+    max_sp_frac = CONSTANTS.HPC_SP_MAX_LIMIT
+    sp_frac = sp_content / binder_content if binder_content > 0 else 0
     
-    Uses simplified heuristics since lab data unavailable:
-    - For "Slab" → target moderate stiffness (prefer low w/b)
-    - For "Column" → prioritize strength and SCM < 30%
-    - For "Pavement" → prioritize low CO₂ and low w/b
+    fines_ok = fines_content >= min_fines
+    sp_ok = sp_frac <= max_sp_frac
     
-    Returns a dict like:
-    {"strength_factor": 0.9, "durability_factor": 0.85, "purpose_penalty": 0.15}
-    
-    Lower penalty = better fit.
-    """
-    try:
-        w_b = float(mix_data.get('w_b', 0.5))
-        binder = float(mix_data.get('cementitious', 350.0))
-        scm_total_frac = float(mix_data.get('scm_total_frac', 0.0))
-        fck_target = float(mix_data.get('fck_target', 30.0))
-        
-        # Base strength factor - higher w/b ratio reduces strength potential
-        strength_factor = max(0.0, min(1.0, 1.2 - (w_b * 1.5)))
-        
-        # Durability factor - lower w/b improves durability
-        durability_factor = max(0.0, min(1.0, 1.3 - (w_b * 1.8)))
-        
-        purpose_penalty = 0.0
-        
-        # Purpose-specific adjustments
-        if purpose == "Slab":
-            # Prefer moderate w/b for workability and cost
-            if w_b < 0.4:
-                purpose_penalty += 0.1  # Too low w/b may reduce workability
-            elif w_b > 0.55:
-                purpose_penalty += 0.2  # Too high w/b reduces strength
-                
-        elif purpose == "Column":
-            # Prioritize strength - prefer lower w/b and moderate SCM
-            if w_b > 0.45:
-                purpose_penalty += 0.3
-            if scm_total_frac > 0.3:
-                purpose_penalty += 0.2  # High SCM may reduce early strength
-                
-        elif purpose == "Beam":
-            # Balance strength and durability
-            if w_b > 0.5:
-                purpose_penalty += 0.25
-            if binder < 320:
-                purpose_penalty += 0.15
-                
-        elif purpose == "Pavement":
-            # Prioritize durability and low CO₂
-            if w_b > 0.45:
-                purpose_penalty += 0.25
-            if binder < 340:
-                purpose_penalty += 0.1
-                
-        elif purpose == "Precast":
-            # Need high early strength - limit SCM
-            if scm_total_frac > 0.3:
-                purpose_penalty += 0.3
-            if w_b > 0.45:
-                purpose_penalty += 0.2
-        
-        # Normalize purpose penalty to 0-1 scale
-        purpose_penalty = min(1.0, purpose_penalty)
-        
-        return {
-            "strength_factor": round(strength_factor, 3),
-            "durability_factor": round(durability_factor, 3),
-            "purpose_penalty": round(purpose_penalty, 3)
-        }
-        
-    except Exception as e:
-        # Return neutral metrics in case of error
-        return {
-            "strength_factor": 0.5,
-            "durability_factor": 0.5, 
-            "purpose_penalty": 0.5
-        }
+    return fines_ok and sp_ok, fines_ok, sp_ok
 
-def compute_purpose_penalty(metrics: dict) -> float:
-    """
-    Converts purpose-fit metrics into a normalized penalty (0–1 scale).
-    
-    Uses weighted average:
-    penalty = (1 - (0.5*metrics["strength_factor"] + 0.3*metrics["durability_factor"])) + metrics.get("purpose_penalty", 0)
-    
-    Clamp between 0 and 1.
-    """
-    try:
-        strength_factor = metrics.get("strength_factor", 0.5)
-        durability_factor = metrics.get("durability_factor", 0.5)
-        specific_penalty = metrics.get("purpose_penalty", 0.0)
-        
-        # Calculate composite penalty
-        composite_score = 0.5 * strength_factor + 0.3 * durability_factor
-        penalty = (1.0 - composite_score) + specific_penalty
-        
-        # Clamp between 0 and 1
-        penalty = max(0.0, min(1.0, penalty))
-        
-        return round(penalty, 3)
-        
-    except Exception:
-        return 0.5  # Neutral penalty in case of error
-
-# ==============================================================================
-# EXISTING HELPER FUNCTIONS (PRESERVED)
-# ==============================================================================
-
-def evaluate_purpose_specific_metrics_legacy(candidate_meta: dict, purpose: str) -> dict:
-    """Legacy function preserved for compatibility"""
+def evaluate_purpose_specific_metrics(candidate_meta: dict, purpose: str) -> dict:
+    """Enhanced with HPC-aware metrics"""
     try:
         fck_target = float(candidate_meta.get('fck_target', 30.0))
         wb = float(candidate_meta.get('w_b', 0.5))
         binder = float(candidate_meta.get('cementitious', 350.0))
         water = float(candidate_meta.get('water_target', 180.0))
-        modulus_proxy = 5000 * np.sqrt(fck_target)
+        sf_frac = float(candidate_meta.get('sf_frac', 0.0))
+        
+        # Enhanced modulus calculation for HPC
+        if sf_frac > 0.05:  # Significant silica fume content
+            modulus_proxy = 5500 * np.sqrt(fck_target)  # HPC has higher modulus
+        else:
+            modulus_proxy = 5000 * np.sqrt(fck_target)
+            
         shrinkage_risk_index = (binder * water) / 10000.0
+        
+        # Enhanced fatigue calculation for pavements
         fatigue_proxy = (1.0 - wb) * (binder / 1000.0)
+        if sf_frac > 0.02:  # Silica fume improves fatigue
+            fatigue_proxy *= 1.2
+            
+        # HPC-specific metric
+        hpc_strength_index = fck_target / (wb * 100) if wb > 0 else 0
+        
+        # Pumpability assessment for HPC
+        fines_content = candidate_meta.get('fine', 0) + binder * sf_frac
+        sp_content = candidate_meta.get('sp', 0)
+        pumpable, fines_ok, sp_ok = check_hpc_pumpability(fines_content, sp_content, binder)
+        
         return {
             "estimated_modulus_proxy (MPa)": round(modulus_proxy, 0),
             "shrinkage_risk_index": round(shrinkage_risk_index, 2),
-            "pavement_fatigue_proxy": round(fatigue_proxy, 2)
+            "pavement_fatigue_proxy": round(fatigue_proxy, 2),
+            "hpc_strength_efficiency": round(hpc_strength_index, 2) if sf_frac > 0 else None,
+            "pumpability_assessment": "Good" if pumpable else "Marginal",
+            "fines_content_ok": fines_ok,
+            "sp_dosage_ok": sp_ok
         }
     except Exception:
         return {"estimated_modulus_proxy (MPa)": None, "shrinkage_risk_index": None, "pavement_fatigue_proxy": None}
 
-def compute_purpose_penalty_legacy(candidate_meta: dict, purpose_profile: dict) -> float:
-    """Legacy function preserved for compatibility"""
+def compute_purpose_penalty(candidate_meta: dict, purpose_profile: dict) -> float:
     if not purpose_profile: return 0.0
     penalty = 0.0
     try:
@@ -396,6 +399,19 @@ def compute_purpose_penalty_legacy(candidate_meta: dict, purpose_profile: dict) 
         current_binder = candidate_meta.get('cementitious', 300.0)
         if current_binder < min_binder:
             penalty += (min_binder - current_binder) * 0.1
+            
+        # HPC-specific penalties
+        sf_frac = candidate_meta.get('sf_frac', 0.0)
+        if sf_frac > 0:
+            # Penalty for insufficient SP with silica fume
+            sp_frac = candidate_meta.get('sp', 0) / current_binder if current_binder > 0 else 0
+            if sp_frac < 0.015:  # Minimum SP for silica fume
+                penalty += (0.015 - sp_frac) * 500
+                
+            # Penalty for high w/b with silica fume
+            if current_wb > 0.40:
+                penalty += (current_wb - 0.40) * 200
+                
         return float(max(0.0, penalty))
     except Exception:
         return 0.0
@@ -416,6 +432,16 @@ def compute_purpose_penalty_vectorized(df: pd.DataFrame, purpose_profile: dict) 
     
     min_binder = purpose_profile.get('min_binder', 0.0)
     penalty += (min_binder - df['binder']).clip(lower=0) * 0.1
+    
+    # HPC-specific vectorized penalties
+    sf_frac_series = df.get('sf_frac', pd.Series(0.0, index=df.index))
+    sp_frac_series = df['sp'] / df['binder'].replace(0, 1)
+    
+    # Penalty for insufficient SP with silica fume
+    penalty += ((0.015 - sp_frac_series).clip(lower=0) * 500 * (sf_frac_series > 0))
+    
+    # Penalty for high w/b with silica fume
+    penalty += ((df['w_b'] - 0.40).clip(lower=0) * 200 * (sf_frac_series > 0))
     
     return penalty.fillna(0.0)
 
@@ -633,6 +659,7 @@ def parse_user_prompt_llm(prompt_text: str) -> dict:
     - "purpose": (String) Must be one of {list(CONSTANTS.PURPOSE_PROFILES.keys())}
     - "optimize_for": (String) Must be "CO2" or "Cost".
     - "use_superplasticizer": (Boolean)
+    - "enable_hpc": (Boolean) Enable High Performance Concrete features
 
     User Prompt:
 "I need M30 for severe marine exposure, 20mm agg, 100 slump, use PPC for a column"
@@ -670,6 +697,8 @@ def parse_user_prompt_llm(prompt_text: str) -> dict:
             cleaned_data["optimize_for"] = parsed_json["optimize_for"]
         if isinstance(parsed_json.get("use_superplasticizer"), bool):
             cleaned_data["use_sp"] = parsed_json["use_superplasticizer"]
+        if isinstance(parsed_json.get("enable_hpc"), bool):
+            cleaned_data["enable_hpc"] = parsed_json["enable_hpc"]
         
         return cleaned_data
     except Exception as e:
@@ -677,7 +706,7 @@ def parse_user_prompt_llm(prompt_text: str) -> dict:
         return simple_parse(prompt_text)
 
 # ==============================================================================
-# PART 3: CORE MIX GENERATION & EVALUATION (UPDATED WITH HPC & PURPOSE OPTIMIZATION)
+# PART 3: CORE MIX GENERATION & EVALUATION
 # ==============================================================================
 
 def evaluate_mix(components_dict, emissions_df, costs_df=None):
@@ -768,6 +797,21 @@ def compliance_checks(mix_df, meta, exposure):
         checks["Unit weight 2200–2600 kg/m³"] = 2200.0 <= total_mass <= 2600.0
     except:
         checks["Unit weight 2200–2600 kg/m³"] = False
+        
+    # HPC-specific checks
+    try:
+        sf_frac = float(meta.get("sf_frac", 0.0))
+        if sf_frac > 0:
+            # Check SP dosage for silica fume
+            sp_frac = float(meta.get("sp", 0)) / float(meta["cementitious"]) if float(meta["cementitious"]) > 0 else 0
+            checks["SP ≥ 1.5% for silica fume"] = sp_frac >= 0.015
+            
+            # Check fines content for pumpability
+            fines_content = float(meta.get("fine", 0)) + float(meta["cementitious"]) * sf_frac
+            checks["Fines ≥ 400 kg/m³ for HPC"] = fines_content >= CONSTANTS.HPC_MIN_FINES_CONTENT
+    except:
+        checks["HPC specific checks"] = False
+        
     derived = {
         "w/b used": round(float(meta.get("w_b", 0.0)), 3),
         "cementitious (kg/m³)": round(float(meta.get("cementitious", 0.0)), 1),
@@ -777,6 +821,7 @@ def compliance_checks(mix_df, meta, exposure):
         "cement (kg/m³)": round(float(meta.get("cement", 0.0)), 1),
         "fly ash (kg/m³)": round(float(meta.get("flyash", 0.0)), 1),
         "GGBS (kg/m³)": round(float(meta.get("ggbs", 0.0)), 1),
+        "silica fume (kg/m³)": round(float(meta.get("silica_fume", 0.0)), 1),
         "fine agg (kg/m³)": round(float(meta.get("fine", 0.0)), 1),
         "coarse agg (kg/m³)": round(float(meta.get("coarse", 0.0)), 1),
         "SP (kg/m³)": round(float(meta.get("sp", 0.0)), 2),
@@ -794,14 +839,24 @@ def sanity_check_mix(meta, df):
     try:
         cement, water, fine = float(meta.get("cement", 0)), float(meta.get("water_target", 0)), float(meta.get("fine", 0))
         coarse, sp = float(meta.get("coarse", 0)), float(meta.get("sp", 0))
+        silica_fume = float(meta.get("silica_fume", 0))
         unit_wt = float(df["Quantity (kg/m3)"].sum())
     except Exception:
         return ["Insufficient data to run sanity checks."]
+    
     if cement > 500: warnings.append(f"High cement content ({cement:.1f} kg/m³). Increases cost, shrinkage, and CO₂.")
     if not 140 <= water <= 220: warnings.append(f"Water content ({water:.1f} kg/m³) is outside the typical range of 140-220 kg/m³.")
     if not 500 <= fine <= 900: warnings.append(f"Fine aggregate quantity ({fine:.1f} kg/m³) is unusual.")
     if not 1000 <= coarse <= 1300: warnings.append(f"Coarse aggregate quantity ({coarse:.1f} kg/m³) is unusual.")
     if sp > 20: warnings.append(f"Superplasticizer dosage ({sp:.1f} kg/m³) is unusually high.")
+    
+    # HPC-specific warnings
+    if silica_fume > 0:
+        if silica_fume > 50: warnings.append(f"High silica fume content ({silica_fume:.1f} kg/m³). Typically 5-10% of binder.")
+        sp_frac = sp / (cement + silica_fume) if (cement + silica_fume) > 0 else 0
+        if sp_frac < 0.015: warnings.append(f"Low SP dosage ({sp_frac:.1%}) for silica fume mix. Recommended ≥1.5%.")
+        if meta.get("w_b", 0.5) > 0.40: warnings.append(f"High w/b ratio ({meta.get('w_b', 0.5):.3f}) for silica fume mix. Consider <0.40 for optimal performance.")
+        
     return warnings
 
 def check_feasibility(mix_df, meta, exposure):
@@ -835,6 +890,21 @@ def get_compliance_reasons(mix_df, meta, exposure):
             reasons.append(f"Unit weight outside range ({total_mass:.1f} kg/m³ not in {min_limit:.0f}-{max_limit:.0f} kg/m³)")
     except:
         reasons.append("Failed unit weight check (parsing error)")
+        
+    # HPC-specific reasons
+    try:
+        sf_frac = float(meta.get("sf_frac", 0.0))
+        if sf_frac > 0:
+            sp_frac = float(meta.get("sp", 0)) / float(meta["cementitious"]) if float(meta["cementitious"]) > 0 else 0
+            if sp_frac < 0.015:
+                reasons.append(f"Insufficient SP for silica fume ({sp_frac:.1%} < 1.5%)")
+                
+            fines_content = float(meta.get("fine", 0)) + float(meta["cementitious"]) * sf_frac
+            if fines_content < CONSTANTS.HPC_MIN_FINES_CONTENT:
+                reasons.append(f"Insufficient fines for HPC pumpability ({fines_content:.0f} kg/m³ < {CONSTANTS.HPC_MIN_FINES_CONTENT} kg/m³)")
+    except:
+        pass
+        
     feasible = len(reasons) == 0
     return feasible, "All IS-code checks passed." if feasible else "; ".join(reasons)
 
@@ -863,6 +933,22 @@ def get_compliance_reasons_vectorized(df: pd.DataFrame, exposure: str) -> pd.Ser
     reasons += np.where(
         ~((df['total_mass'] >= 2200) & (df['total_mass'] <= 2600)),
         "Unit weight outside range (" + df['total_mass'].round(1).astype(str) + " not in 2200-2600); ",
+        ""
+    )
+    
+    # HPC-specific vectorized reasons
+    sf_frac_series = df.get('sf_frac', pd.Series(0.0, index=df.index))
+    sp_frac_series = df['sp'] / df['binder'].replace(0, 1)
+    fines_content_series = df['fine'] + df['binder'] * sf_frac_series
+    
+    reasons += np.where(
+        (sf_frac_series > 0) & (sp_frac_series < 0.015),
+        "Insufficient SP for silica fume (" + (sp_frac_series * 100).round(1).astype(str) + "% < 1.5%); ",
+        ""
+    )
+    reasons += np.where(
+        (sf_frac_series > 0) & (fines_content_series < CONSTANTS.HPC_MIN_FINES_CONTENT),
+        "Insufficient fines for HPC pumpability (" + fines_content_series.round(0).astype(str) + " kg/m³ < " + str(CONSTANTS.HPC_MIN_FINES_CONTENT) + " kg/m³); ",
         ""
     )
     
@@ -936,37 +1022,27 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
                 wb_min=0.35, wb_steps=6, max_flyash_frac=0.3, max_ggbs_frac=0.5, 
                 scm_step=0.1, fine_fraction_override=None,
                 purpose='General', purpose_profile=None, purpose_weights=None,
-                enable_purpose_optimization=False, st_progress=None):
+                enable_purpose_optimization=False, enable_hpc=False, hpc_options=None,
+                st_progress=None):
 
-    # --- 1. Setup Parameters with HPC Support ---
+    # --- 1. Setup Parameters ---
     if st_progress:
         st_progress.progress(0.0, text="Initializing parameters...")
     
-    # Check if this is an HPC mix and adjust parameters accordingly
-    grade_num = int(grade[1:])  # Extract numeric grade
-    is_hpc = grade_num >= 60
-    
-    # Apply HPC constraints if applicable
-    if is_hpc:
-        # Force superplasticizer for HPC mixes
-        use_sp = True
-        # Apply HPC-specific SCM limits
-        max_flyash_frac = min(max_flyash_frac, 0.2)  # Max 20% fly ash for HPC
-        max_ggbs_frac = min(max_ggbs_frac, 0.5)     # Max 50% GGBS for HPC
-    
-    w_b_limit = float(CONSTANTS.EXPOSURE_WB_LIMITS[exposure])
-    min_cem_exp = float(CONSTANTS.EXPOSURE_MIN_CEMENT[exposure])
-    
-    # Calculate base water content and apply HPC adjustments if needed
-    base_water = water_for_slump_and_shape(nom_max_mm=nom_max, slump_mm=int(target_slump), agg_shape=agg_shape, uses_sp=use_sp, sp_reduction_frac=sp_reduction)
-    
-    if is_hpc:
-        target_water = adjust_water_for_HPC(base_water, grade, use_sp)
+    # Adjust w/b limits for HPC
+    if enable_hpc:
+        w_b_limit = min(CONSTANTS.EXPOSURE_WB_LIMITS[exposure], CONSTANTS.HPC_WB_RANGE[1])
+        wb_min = max(wb_min, CONSTANTS.HPC_WB_RANGE[0])
     else:
-        target_water = base_water
+        w_b_limit = float(CONSTANTS.EXPOSURE_WB_LIMITS[exposure])
         
+    min_cem_exp = float(CONSTANTS.EXPOSURE_MIN_CEMENT[exposure])
+    target_water = water_for_slump_and_shape(nom_max_mm=nom_max, slump_mm=int(target_slump), agg_shape=agg_shape, uses_sp=use_sp, sp_reduction_frac=sp_reduction)
     min_b_grade, max_b_grade = reasonable_binder_range(grade)
     density_fa, density_ca = material_props['sg_fa'] * 1000, material_props['sg_ca'] * 1000
+    
+    if hpc_options is None:
+        hpc_options = CONSTANTS.HPC_OPTIONS
     
     if 'warned_emissions' in st.session_state: st.session_state.warned_emissions.clear()
     if 'warned_costs' in st.session_state: st.session_state.warned_costs.clear()
@@ -981,10 +1057,16 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     norm_cement_choice = _normalize_material_value(cement_choice)
     materials_to_calc = [
         norm_cement_choice, CONSTANTS.NORM_FLYASH, CONSTANTS.NORM_GGBS,
-        CONSTANTS.NORM_WATER, CONSTANTS.NORM_SP, CONSTANTS.NORM_FINE_AGG,
-        CONSTANTS.NORM_COARSE_AGG
+        CONSTANTS.NORM_SILICA_FUME, CONSTANTS.NORM_WATER, CONSTANTS.NORM_SP, 
+        CONSTANTS.NORM_FINE_AGG, CONSTANTS.NORM_COARSE_AGG
     ]
     co2_factors, cost_factors = _get_material_factors(materials_to_calc, emissions, costs)
+
+    # Check for missing silica fume in library if HPC enabled
+    if enable_hpc and CONSTANTS.NORM_SILICA_FUME not in co2_factors:
+        st.warning("⚠️ Silica fume not found in materials library. Using placeholder values for HPC calculations.")
+        co2_factors[CONSTANTS.NORM_SILICA_FUME] = hpc_options["silica_fume"]["co2_factor"]
+        cost_factors[CONSTANTS.NORM_SILICA_FUME] = hpc_options["silica_fume"]["cost_factor"]
 
     # --- 3. Create Parameter Grid ---
     if st_progress:
@@ -994,10 +1076,18 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     flyash_options = np.arange(0.0, max_flyash_frac + 1e-9, scm_step)
     ggbs_options = np.arange(0.0, max_ggbs_frac + 1e-9, scm_step)
     
-    grid_params = list(product(wb_values, flyash_options, ggbs_options))
-    grid_df = pd.DataFrame(grid_params, columns=['wb_input', 'flyash_frac', 'ggbs_frac'])
+    if enable_hpc:
+        silica_fume_options = np.arange(0.0, hpc_options["silica_fume"]["max_frac"] + 1e-9, scm_step/2)
+        grid_params = list(product(wb_values, flyash_options, ggbs_options, silica_fume_options))
+        grid_df = pd.DataFrame(grid_params, columns=['wb_input', 'flyash_frac', 'ggbs_frac', 'sf_frac'])
+        
+        # Apply HPC constraints
+        grid_df = grid_df[grid_df['flyash_frac'] + grid_df['ggbs_frac'] + grid_df['sf_frac'] <= 0.50]
+    else:
+        grid_params = list(product(wb_values, flyash_options, ggbs_options))
+        grid_df = pd.DataFrame(grid_params, columns=['wb_input', 'flyash_frac', 'ggbs_frac'])
+        grid_df['sf_frac'] = 0.0
     
-    grid_df = grid_df[grid_df['flyash_frac'] + grid_df['ggbs_frac'] <= 0.50].copy()
     if grid_df.empty:
         return None, None, [] # No feasible SCM combinations
 
@@ -1007,19 +1097,37 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     
     grid_df['binder_for_strength'] = target_water / grid_df['wb_input']
     
+    # Apply HPC water adjustment
+    if enable_hpc:
+        grid_df['water_adjusted'] = grid_df.apply(
+            lambda row: adjust_water_for_HPC(target_water, row['sf_frac'], hpc_options), axis=1
+        )
+        grid_df['binder_for_strength'] = grid_df['water_adjusted'] / grid_df['wb_input']
+    else:
+        grid_df['water_adjusted'] = target_water
+    
     # FIX: Broadcast scalars to array shape to prevent ValueError
     grid_df['binder'] = np.maximum(
         np.maximum(grid_df['binder_for_strength'], min_cem_exp),
         min_b_grade
     )
     grid_df['binder'] = np.minimum(grid_df['binder'], max_b_grade)
-    grid_df['w_b'] = target_water / grid_df['binder']
+    grid_df['w_b'] = grid_df['water_adjusted'] / grid_df['binder']
     
-    grid_df['scm_total_frac'] = grid_df['flyash_frac'] + grid_df['ggbs_frac']
+    grid_df['scm_total_frac'] = grid_df['flyash_frac'] + grid_df['ggbs_frac'] + grid_df['sf_frac']
     grid_df['cement'] = grid_df['binder'] * (1 - grid_df['scm_total_frac'])
     grid_df['flyash'] = grid_df['binder'] * grid_df['flyash_frac']
     grid_df['ggbs'] = grid_df['binder'] * grid_df['ggbs_frac']
-    grid_df['sp'] = (0.01 * grid_df['binder']) if use_sp else 0.0
+    grid_df['silica_fume'] = grid_df['binder'] * grid_df['sf_frac']
+    
+    # Apply HPC SP adjustment
+    base_sp = (0.01 * grid_df['binder']) if use_sp else 0.0
+    if enable_hpc:
+        grid_df['sp'] = grid_df.apply(
+            lambda row: adjust_sp_for_HPC(base_sp, row['sf_frac'], hpc_options), axis=1
+        )
+    else:
+        grid_df['sp'] = base_sp
     
     if st_progress:
         st_progress.progress(0.3, text="Calculating aggregate proportions...")
@@ -1030,7 +1138,7 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
         grid_df['coarse_agg_fraction'] = get_coarse_agg_fraction_vectorized(nom_max, fine_zone, grid_df['w_b'])
     
     grid_df['fine_ssd'], grid_df['coarse_ssd'] = compute_aggregates_vectorized(
-        grid_df['binder'], target_water, grid_df['sp'], grid_df['coarse_agg_fraction'],
+        grid_df['binder'], grid_df['water_adjusted'], grid_df['sp'], grid_df['coarse_agg_fraction'],
         nom_max, density_fa, density_ca
     )
     
@@ -1041,7 +1149,7 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
         material_props['moisture_ca'], grid_df['coarse_ssd']
     )
     
-    grid_df['water_final'] = (target_water - (water_delta_fa_series + water_delta_ca_series)).clip(lower=5.0)
+    grid_df['water_final'] = (grid_df['water_adjusted'] - (water_delta_fa_series + water_delta_ca_series)).clip(lower=5.0)
 
     # --- 5. Vectorized Cost & CO2 Calculations ---
     if st_progress:
@@ -1051,6 +1159,7 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
         grid_df['cement'] * co2_factors.get(norm_cement_choice, 0.0) +
         grid_df['flyash'] * co2_factors.get(CONSTANTS.NORM_FLYASH, 0.0) +
         grid_df['ggbs'] * co2_factors.get(CONSTANTS.NORM_GGBS, 0.0) +
+        grid_df['silica_fume'] * co2_factors.get(CONSTANTS.NORM_SILICA_FUME, 0.0) +
         grid_df['water_final'] * co2_factors.get(CONSTANTS.NORM_WATER, 0.0) +
         grid_df['sp'] * co2_factors.get(CONSTANTS.NORM_SP, 0.0) +
         grid_df['fine_wet'] * co2_factors.get(CONSTANTS.NORM_FINE_AGG, 0.0) +
@@ -1061,6 +1170,7 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
         grid_df['cement'] * cost_factors.get(norm_cement_choice, 0.0) +
         grid_df['flyash'] * cost_factors.get(CONSTANTS.NORM_FLYASH, 0.0) +
         grid_df['ggbs'] * cost_factors.get(CONSTANTS.NORM_GGBS, 0.0) +
+        grid_df['silica_fume'] * cost_factors.get(CONSTANTS.NORM_SILICA_FUME, 0.0) +
         grid_df['water_final'] * cost_factors.get(CONSTANTS.NORM_WATER, 0.0) +
         grid_df['sp'] * cost_factors.get(CONSTANTS.NORM_SP, 0.0) +
         grid_df['fine_wet'] * cost_factors.get(CONSTANTS.NORM_FINE_AGG, 0.0) +
@@ -1072,7 +1182,7 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
         st_progress.progress(0.7, text="Checking compliance and purpose-fit...")
     
     grid_df['total_mass'] = (
-        grid_df['cement'] + grid_df['flyash'] + grid_df['ggbs'] + 
+        grid_df['cement'] + grid_df['flyash'] + grid_df['ggbs'] + grid_df['silica_fume'] +
         grid_df['water_final'] + grid_df['sp'] + 
         grid_df['fine_wet'] + grid_df['coarse_wet']
     )
@@ -1082,33 +1192,29 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     grid_df['check_scm'] = grid_df['scm_total_frac'] <= 0.50
     grid_df['check_unit_wt'] = (grid_df['total_mass'] >= 2200.0) & (grid_df['total_mass'] <= 2600.0)
     
-    grid_df['feasible'] = (
-        grid_df['check_wb'] & grid_df['check_min_cem'] &
-        grid_df['check_scm'] & grid_df['check_unit_wt']
-    )
+    # HPC-specific feasibility checks
+    if enable_hpc:
+        grid_df['fines_content'] = grid_df['fine_wet'] + grid_df['binder'] * grid_df['sf_frac']
+        grid_df['sp_frac'] = grid_df['sp'] / grid_df['binder'].replace(0, 1)
+        grid_df['check_hpc_fines'] = grid_df['fines_content'] >= CONSTANTS.HPC_MIN_FINES_CONTENT
+        grid_df['check_hpc_sp'] = grid_df['sp_frac'] >= 0.015
+        grid_df['feasible'] = (
+            grid_df['check_wb'] & grid_df['check_min_cem'] &
+            grid_df['check_scm'] & grid_df['check_unit_wt'] &
+            grid_df['check_hpc_fines'] & grid_df['check_hpc_sp']
+        )
+    else:
+        grid_df['feasible'] = (
+            grid_df['check_wb'] & grid_df['check_min_cem'] &
+            grid_df['check_scm'] & grid_df['check_unit_wt']
+        )
     
     grid_df['reasons'] = get_compliance_reasons_vectorized(grid_df, exposure)
-    
-    # Calculate purpose penalty for each candidate mix
-    if enable_purpose_optimization and purpose != 'General':
-        purpose_penalties = []
-        for _, row in grid_df.iterrows():
-            mix_meta = {
-                'w_b': row['w_b'],
-                'cementitious': row['binder'],
-                'scm_total_frac': row['scm_total_frac'],
-                'fck_target': CONSTANTS.GRADE_STRENGTH[grade] + 1.65 * CONSTANTS.QC_STDDEV["Good"]
-            }
-            purpose_metrics = evaluate_purpose_specific_metrics(mix_meta, purpose)
-            penalty = compute_purpose_penalty(purpose_metrics)
-            purpose_penalties.append(penalty)
-        grid_df['purpose_penalty'] = purpose_penalties
-    else:
-        grid_df['purpose_penalty'] = compute_purpose_penalty_vectorized(grid_df, purpose_profile)
-    
+    grid_df['purpose_penalty'] = compute_purpose_penalty_vectorized(grid_df, purpose_profile)
     grid_df['purpose'] = purpose
+    grid_df['enable_hpc'] = enable_hpc
 
-    # --- 7. Candidate Selection with Purpose Optimization ---
+    # --- 7. Candidate Selection ---
     if st_progress:
         st_progress.progress(0.8, text="Finding best mix design...")
     
@@ -1124,15 +1230,13 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
         feasible_candidates_df['composite_score'] = np.nan # Not used
         best_idx = feasible_candidates_df[objective_col].idxmin()
     else:
-        # Normalize objectives for composite scoring
         feasible_candidates_df['norm_co2'] = _minmax_scale(feasible_candidates_df['co2_total'])
         feasible_candidates_df['norm_cost'] = _minmax_scale(feasible_candidates_df['cost_total'])
         feasible_candidates_df['norm_purpose'] = _minmax_scale(feasible_candidates_df['purpose_penalty'])
         
-        # Apply purpose-specific weights
-        w_co2 = purpose_weights.get('co2', 0.4)
-        w_cost = purpose_weights.get('cost', 0.4)
-        w_purpose = purpose_weights.get('purpose', 0.2)
+        w_co2 = purpose_weights.get('w_co2', 0.4)
+        w_cost = purpose_weights.get('w_cost', 0.4)
+        w_purpose = purpose_weights.get('w_purpose', 0.2)
         
         feasible_candidates_df['composite_score'] = (
             w_co2 * feasible_candidates_df['norm_co2'] +
@@ -1157,34 +1261,27 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
         "Coarse Aggregate": best_meta_series['coarse_wet']
     }
     
-    best_df = evaluate_mix(best_mix_dict, emissions, costs)
+    # Add silica fume if used
+    if enable_hpc and best_meta_series['sf_frac'] > 0:
+        best_mix_dict["Silica Fume"] = best_meta_series['silica_fume']
     
-    # Calculate final purpose metrics for the selected mix
-    final_purpose_metrics = evaluate_purpose_specific_metrics({
-        'w_b': best_meta_series['w_b'],
-        'cementitious': best_meta_series['binder'],
-        'scm_total_frac': best_meta_series['scm_total_frac'],
-        'fck_target': CONSTANTS.GRADE_STRENGTH[grade] + 1.65 * CONSTANTS.QC_STDDEV["Good"]
-    }, purpose)
+    best_df = evaluate_mix(best_mix_dict, emissions, costs)
     
     best_meta = best_meta_series.to_dict()
     best_meta.update({
         "cementitious": best_meta_series['binder'],
         "water_target": target_water,
+        "water_adjusted": best_meta_series.get('water_adjusted', target_water),
         "fine": best_meta_series['fine_wet'],
         "coarse": best_meta_series['coarse_wet'],
+        "silica_fume": best_meta_series.get('silica_fume', 0.0),
+        "sf_frac": best_meta_series.get('sf_frac', 0.0),
         "grade": grade, "exposure": exposure, "nom_max": nom_max,
         "slump": target_slump, "binder_range": (min_b_grade, max_b_grade),
         "material_props": material_props,
-        "purpose": purpose,
-        "purpose_metrics": final_purpose_metrics,
-        "purpose_penalty": compute_purpose_penalty(final_purpose_metrics),
-        "hpc_enabled": is_hpc
+        "enable_hpc": enable_hpc,
+        "purpose_metrics": evaluate_purpose_specific_metrics(best_meta, purpose)
     })
-    
-    # Add composite score if calculated
-    if enable_purpose_optimization and purpose != 'General':
-        best_meta["composite_score"] = best_meta_series['composite_score']
     
     trace_df = grid_df.rename(columns={"w_b": "wb", "cost_total": "cost", "co2_total": "co2"})
     
@@ -1198,27 +1295,11 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
 def generate_baseline(grade, exposure, nom_max, target_slump, agg_shape, 
                      fine_zone, emissions, costs, cement_choice, material_props, 
                      use_sp=True, sp_reduction=0.18,
-                     purpose='General', purpose_profile=None):
-    
-    # Check for HPC and adjust parameters
-    grade_num = int(grade[1:])
-    is_hpc = grade_num >= 60
-    
-    # Apply HPC constraints if applicable
-    if is_hpc:
-        use_sp = True  # Force superplasticizer for HPC
+                     purpose='General', purpose_profile=None, enable_hpc=False):
     
     w_b_limit = float(CONSTANTS.EXPOSURE_WB_LIMITS[exposure])
     min_cem_exp = float(CONSTANTS.EXPOSURE_MIN_CEMENT[exposure])
-    
-    # Calculate base water and apply HPC adjustments if needed
-    base_water = water_for_slump_and_shape(nom_max_mm=nom_max, slump_mm=int(target_slump), agg_shape=agg_shape, uses_sp=use_sp, sp_reduction_frac=sp_reduction)
-    
-    if is_hpc:
-        water_target = adjust_water_for_HPC(base_water, grade, use_sp)
-    else:
-        water_target = base_water
-        
+    water_target = water_for_slump_and_shape(nom_max_mm=nom_max, slump_mm=int(target_slump), agg_shape=agg_shape, uses_sp=use_sp, sp_reduction_frac=sp_reduction)
     min_b_grade, max_b_grade = reasonable_binder_range(grade)
 
     binder_for_wb = water_target / w_b_limit
@@ -1247,24 +1328,16 @@ def generate_baseline(grade, exposure, nom_max, target_slump, agg_shape,
         "cost_total": float(df["Cost (₹/m3)"].sum()),
         "coarse_agg_fraction": coarse_agg_frac, "material_props": material_props,
         "binder_range": (min_b_grade, max_b_grade),
-        "hpc_enabled": is_hpc
+        "enable_hpc": enable_hpc
     }
     
     if purpose_profile is None:
         purpose_profile = CONSTANTS.PURPOSE_PROFILES.get(purpose, CONSTANTS.PURPOSE_PROFILES['General'])
         
-    # Calculate purpose metrics for baseline
-    purpose_metrics = evaluate_purpose_specific_metrics({
-        'w_b': actual_wb,
-        'cementitious': cementitious,
-        'scm_total_frac': 0.0,
-        'fck_target': CONSTANTS.GRADE_STRENGTH[grade] + 1.65 * CONSTANTS.QC_STDDEV["Good"]
-    }, purpose)
-    
     meta.update({
         "purpose": purpose,
-        "purpose_metrics": purpose_metrics,
-        "purpose_penalty": compute_purpose_penalty(purpose_metrics),
+        "purpose_metrics": evaluate_purpose_specific_metrics(meta, purpose),
+        "purpose_penalty": compute_purpose_penalty(meta, purpose_profile),
         "composite_score": np.nan
     })
     return df, meta
@@ -1292,10 +1365,12 @@ def apply_parser(user_text, current_inputs, use_llm_parser=False):
         updated["nom_max"] = parsed["nom_max"]; messages.append(f"✅ Parser set Aggregate Size to **{parsed['nom_max']} mm**")
     if "purpose" in parsed and parsed["purpose"] in CONSTANTS.PURPOSE_PROFILES:
         updated["purpose"] = parsed["purpose"]; messages.append(f"✅ Parser set Purpose to **{parsed['purpose']}**")
+    if "enable_hpc" in parsed:
+        updated["enable_hpc"] = parsed["enable_hpc"]; messages.append(f"✅ Parser set HPC to **{parsed['enable_hpc']}**")
     return updated, messages, parsed
 
 # ==============================================================================
-# PART 4: UI HELPER FUNCTIONS (UPDATED WITH HPC & PURPOSE DISPLAY)
+# PART 4: UI HELPER FUNCTIONS
 # ==============================================================================
 
 def get_clarification_question(field_name: str) -> str:
@@ -1305,7 +1380,8 @@ def get_clarification_question(field_name: str) -> str:
         "exposure": f"What is the exposure condition? (e.g., {', '.join(CONSTANTS.EXPOSURE_WB_LIMITS.keys())})",
         "target_slump": "What is the target slump in mm (e.g., 75, 100, 125)?",
         "nom_max": "What is the nominal maximum aggregate size in mm (e.g., 10, 20, 40)?",
-        "cement_choice": f"Which cement type would you like to use? (e.g., {', '.join(CONSTANTS.CEMENT_TYPES)})"
+        "cement_choice": f"Which cement type would you like to use? (e.g., {', '.join(CONSTANTS.CEMENT_TYPES)})",
+        "enable_hpc": "Do you want to enable High Performance Concrete features (silica fume, low w/b)?"
     }
     return questions.get(field_name, "I'm missing some information. Can you provide more details?")
 
@@ -1321,27 +1397,28 @@ def _plot_overview_chart(st_col, title, y_label, base_val, opt_val, colors, fmt_
 
 def display_mix_details(title, df, meta, exposure):
     st.header(title)
-    
-    # Show HPC notice if applicable
-    if meta.get("hpc_enabled", False):
-        st.info("⚡ This is a High-Performance Concrete (HPC) mix. Water content and SCMs have been adjusted for advanced performance.", icon="⚡")
-    
     purpose = meta.get("purpose", "General")
-    if purpose != "General":
+    enable_hpc = meta.get("enable_hpc", False)
+    
+    if purpose != "General" or enable_hpc:
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("💧 Water/Binder Ratio", f"{meta['w_b']:.3f}")
         c2.metric("📦 Total Binder (kg/m³)", f"{meta['cementitious']:.1f}")
         c3.metric("🎯 Target Strength (MPa)", f"{meta['fck_target']:.1f}")
         c4.metric("⚖️ Unit Weight (kg/m³)", f"{df['Quantity (kg/m3)'].sum():.1f}")
         
-        # Purpose-specific metrics
+        if enable_hpc:
+            c5, c6, c7 = st.columns(3)
+            c5.metric("🧪 Silica Fume", f"{meta.get('silica_fume', 0):.1f} kg/m³", f"{meta.get('sf_frac', 0)*100:.1f}%")
+            c6.metric("🔬 HPC Mode", "Enabled", help="High Performance Concrete with silica fume")
+            if "purpose_metrics" in meta and meta["purpose_metrics"].get("pumpability_assessment"):
+                c7.metric("📊 Pumpability", meta["purpose_metrics"]["pumpability_assessment"])
+        
         c_p1, c_p2, c_p3 = st.columns(3)
         c_p1.metric("🛠️ Design Purpose", purpose)
-        c_p2.metric("⚠️ Purpose Penalty", f"{meta.get('purpose_penalty', 0.0):.2f}", 
-                   help="Penalty for deviation from purpose targets (lower is better).")
+        c_p2.metric("⚠️ Purpose Penalty", f"{meta.get('purpose_penalty', 0.0):.2f}", help="Penalty for deviation from purpose targets (lower is better).")
         if "composite_score" in meta and not pd.isna(meta["composite_score"]):
-            c_p3.metric("🎯 Composite Score", f"{meta.get('composite_score', 0.0):.3f}", 
-                       help="Normalized score balancing CO₂, Cost, and Purpose-Fit (lower is better).")
+            c_p3.metric("🎯 Composite Score", f"{meta.get('composite_score', 0.0):.3f}", help="Normalized score (lower is better).")
     else:
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("💧 Water/Binder Ratio", f"{meta['w_b']:.3f}")
@@ -1365,12 +1442,9 @@ def display_mix_details(title, df, meta, exposure):
         st.error(f"❌ This mix fails {len(fail_reasons)} IS code compliance check(s): " + ", ".join(fail_reasons), icon="🚨")
     for warning in warnings:
         st.warning(warning, icon="⚠️")
-    
-    # Show purpose metrics if available
-    if purpose != "General" and "purpose_metrics" in meta:
-        with st.expander(f"Show Purpose-Specific Performance Metrics ({purpose})"):
+    if (purpose != "General" or enable_hpc) and "purpose_metrics" in meta:
+        with st.expander(f"Show Estimated Purpose-Specific Metrics ({purpose})"):
             st.json(meta["purpose_metrics"])
-    
     with st.expander("Show detailed calculation parameters"):
         if "purpose_metrics" in derived:
             derived.pop("purpose_metrics", None)
@@ -1379,14 +1453,16 @@ def display_mix_details(title, df, meta, exposure):
 def display_calculation_walkthrough(meta):
     st.header("Step-by-Step Calculation Walkthrough")
     
-    # Add HPC note if applicable
-    if meta.get("hpc_enabled", False):
-        st.info("""
-        **High-Performance Concrete (HPC) Adjustments Applied:**
-        - Water content reduced for enhanced strength and durability
-        - SCM limits optimized for high-performance requirements  
-        - Superplasticizer automatically enabled for improved workability
-        """, icon="⚡")
+    enable_hpc = meta.get("enable_hpc", False)
+    hpc_section = ""
+    if enable_hpc:
+        hpc_section = f"""
+    #### HPC-Specific Adjustments
+    - **Silica Fume Content:** `{meta.get('sf_frac', 0)*100:.1f}%` of binder = `{meta.get('silica_fume', 0):.1f}` kg/m³
+    - **Water Demand Multiplier:** Applied `{meta.get('water_adjusted', meta['water_target']) / meta['water_target']:.3f}x` multiplier for silica fume
+    - **SP Effectiveness Boost:** Increased SP dosage by `{(meta.get('sp', 0) / (0.01 * meta['cementitious']) - 1)*100:.0f}%` for better dispersion
+    - **Pumpability Check:** Fines content = `{meta.get('fine', 0) + meta['cementitious'] * meta.get('sf_frac', 0):.0f}` kg/m³ ({'✓' if meta.get('fine', 0) + meta['cementitious'] * meta.get('sf_frac', 0) >= CONSTANTS.HPC_MIN_FINES_CONTENT else '✗'} ≥ {CONSTANTS.HPC_MIN_FINES_CONTENT} kg/m³)
+        """
     
     st.markdown(f"""
     This is a summary of how the **Optimized Mix** was designed according to **IS 10262:2019**.
@@ -1400,6 +1476,7 @@ def display_calculation_walkthrough(meta):
     - **Basis:** IS 10262, Table 4, for `{meta['nom_max']}` mm nominal max aggregate size.
     - **Adjustments:** Slump (`{meta['slump']}` mm), aggregate shape ('{meta.get('agg_shape', 'Angular (baseline)')}'), and superplasticizer use.
     - **Final Target Water (SSD basis):** **`{meta['water_target']:.1f}` kg/m³**
+    {f"- **HPC Water Adjustment:** **`{meta.get('water_adjusted', meta['water_target']):.1f}` kg/m³** (adjusted for silica fume)" if enable_hpc else ""}
 
     #### 3. Water-Binder (w/b) Ratio
     - **Constraint:** Maximum w/b ratio for `{meta['exposure']}` exposure is `{CONSTANTS.EXPOSURE_WB_LIMITS[meta['exposure']]}`.
@@ -1407,20 +1484,21 @@ def display_calculation_walkthrough(meta):
     - **Selected w/b Ratio:** **`{meta['w_b']:.3f}`**
 
     #### 4. Binder Content
-    - **Initial Binder (from w/b):** `{meta['water_target']:.1f} / {meta['w_b']:.3f} = {(meta['water_target']/meta['w_b']):.1f}` kg/m³
+    - **Initial Binder (from w/b):** `{meta.get('water_adjusted', meta['water_target']):.1f} / {meta['w_b']:.3f} = {(meta.get('water_adjusted', meta['water_target'])/meta['w_b']):.1f}` kg/m³
     - **Constraints Check:**
               - Min. for `{meta['exposure']}` exposure: `{CONSTANTS.EXPOSURE_MIN_CEMENT[meta['exposure']]}` kg/m³
               - Typical range for `{meta['grade']}`: `{meta['binder_range'][0]}` - `{meta['binder_range'][1]}`
     - **Final Adjusted Binder Content:** **`{meta['cementitious']:.1f}` kg/m³**
 
     #### 5. SCM & Cement Content
-    - **Optimizer Goal:** Minimize CO₂/cost by replacing cement with SCMs (Fly Ash, GGBS).
+    - **Optimizer Goal:** Minimize CO₂/cost by replacing cement with SCMs (Fly Ash, GGBS{", Silica Fume" if enable_hpc else ""}).
     - **Selected SCM Fraction:** `{meta['scm_total_frac']*100:.0f}%`
     - **Material Quantities:**
               - **Cement:** `{meta['cement']:.1f}` kg/m³
               - **Fly Ash:** `{meta['flyash']:.1f}` kg/m³
               - **GGBS:** `{meta['ggbs']:.1f}` kg/m³
-
+              {f"- **Silica Fume:** `{meta.get('silica_fume', 0):.1f}` kg/m³" if enable_hpc else ""}
+    {hpc_section}
     #### 6. Aggregate Proportioning (IS 10262, Table 5)
     - **Basis:** Volume of coarse aggregate for `{meta['nom_max']}` mm aggregate and fine aggregate `{meta.get('fine_zone', 'Zone II')}`.
     - **Adjustment:** Corrected for the final w/b ratio of `{meta['w_b']:.3f}`.
@@ -1462,11 +1540,14 @@ def run_generation_logic(inputs: dict, emissions_df: pd.DataFrame, costs_df: pd.
         purpose_profile = purpose_profiles_data.get(purpose, purpose_profiles_data['General'])
         enable_purpose_opt = inputs.get('enable_purpose_optimization', False)
         purpose_weights = inputs.get('purpose_weights', purpose_profiles_data['General']['weights'])
+        enable_hpc = inputs.get('enable_hpc', False)
         
         if purpose == 'General': enable_purpose_opt = False
         
         if st_progress: # Only show info box in manual mode, not chat (where the text shows in chat history)
-            if enable_purpose_opt:
+            if enable_hpc:
+                st.info(f"🧪 Running High Performance Concrete optimization for **{purpose}**.", icon="🔬")
+            elif enable_purpose_opt:
                 st.info(f"🚀 Running composite optimization for **{purpose}**.", icon="🛠️")
             else:
                 st.info(f"Running single-objective optimization for **{inputs.get('optimize_for', 'CO₂ Emissions')}**.", icon="⚙️")
@@ -1485,6 +1566,7 @@ def run_generation_logic(inputs: dict, emissions_df: pd.DataFrame, costs_df: pd.
             purpose=purpose, purpose_profile=purpose_profile,
             purpose_weights=purpose_weights,
             enable_purpose_optimization=enable_purpose_opt,
+            enable_hpc=enable_hpc,
             st_progress=st_progress,
             **calibration_kwargs
         )
@@ -1497,7 +1579,7 @@ def run_generation_logic(inputs: dict, emissions_df: pd.DataFrame, costs_df: pd.
             emissions_df, costs_df, inputs["cement_choice"],
             material_props=inputs["material_props"],
             use_sp=inputs.get("use_sp", True), purpose=purpose,
-            purpose_profile=purpose_profile
+            purpose_profile=purpose_profile, enable_hpc=enable_hpc
         )
         
         if st_progress: st_progress.progress(1.0, text="Optimization complete!")
@@ -1511,7 +1593,10 @@ def run_generation_logic(inputs: dict, emissions_df: pd.DataFrame, costs_df: pd.
             st.session_state.results = {"success": False, "trace": trace}
         else:
             if not st.session_state.get("chat_mode", False): # Only show success message in manual mode
-                st.success(f"Successfully generated mix designs for **{inputs['grade']}** concrete in **{inputs['exposure']}** conditions.", icon="✅")
+                success_msg = f"Successfully generated mix designs for **{inputs['grade']}** concrete in **{inputs['exposure']}** conditions."
+                if enable_hpc:
+                    success_msg += " 🧪 **HPC Mode Enabled**"
+                st.success(success_msg, icon="✅")
             
             for m in (opt_meta, base_meta):
                 m.update({
@@ -1552,7 +1637,7 @@ def display_full_mix_report_from_chat():
 
 
 # ==============================================================================
-# PART 6: STREAMLIT APP (UI Sub-modules) - UPDATED WITH HPC & PURPOSE REPORTING
+# PART 6: STREAMLIT APP (UI Sub-modules)
 # ==============================================================================
 
 def run_chat_interface(purpose_profiles_data: dict):
@@ -1585,13 +1670,8 @@ def run_chat_interface(purpose_profiles_data: dict):
         - **♻️ SCM Content:** {opt_meta['scm_total_frac']*100:.0f}%
         """
         
-        # Add HPC notice if applicable
-        if opt_meta.get("hpc_enabled", False):
-            summary_msg += "\n- **⚡ High-Performance Concrete (HPC) mix** with optimized water and SCMs"
-            
-        # Add purpose optimization info if applicable
-        if opt_meta.get("purpose", "General") != "General" and "composite_score" in opt_meta:
-            summary_msg += f"\n- **🎯 Purpose-Optimized for {opt_meta['purpose']}** (Score: {opt_meta['composite_score']:.3f})"
+        if opt_meta.get("enable_hpc", False):
+            summary_msg += f"\n- **🧪 HPC Features:** Silica fume {opt_meta.get('sf_frac', 0)*100:.1f}% ({opt_meta.get('silica_fume', 0):.1f} kg/m³)"
         
         st.session_state.chat_history.append({"role": "assistant", "content": summary_msg})
         st.session_state.chat_results_displayed = True
@@ -1687,7 +1767,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
         st.subheader("Core Mix Requirements")
         
         enable_hpc = st.toggle("Enable HPC (M60–M100)", value=False, key="enable_hpc_toggle",
-                       help="When enabled, adds high-performance concrete grades (M60–M100) to the grade options.")
+                       help="When enabled, adds high-performance concrete grades (M60–M100) to the grade options and enables silica fume optimization.")
         
         c1, c2, c3, c4 = st.columns(4)
         with c1:
@@ -1706,6 +1786,30 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                 help="Select the type of cement used. Each option has distinct cost and CO₂ emission factors.",
                 key="cement_choice"
             )
+        
+        # HPC Options Section
+        if enable_hpc:
+            st.markdown("---")
+            st.subheader("🧪 High Performance Concrete (HPC) Options")
+            hpc_col1, hpc_col2 = st.columns(2)
+            with hpc_col1:
+                max_sf_frac = st.slider("Max Silica Fume Fraction", 0.0, 0.15, 0.10, 0.01,
+                                       help="Maximum silica fume as fraction of binder content")
+                use_hpc_presets = st.checkbox("Use HPC Low w/b Presets", True,
+                                             help="Allow w/b ratios as low as 0.25 for HPC grades")
+            with hpc_col2:
+                hpc_wb_min = st.slider("HPC Min w/b Ratio", 0.25, 0.40, 0.30, 0.01,
+                                      disabled=not use_hpc_presets,
+                                      help="Minimum water-binder ratio for HPC optimization")
+                
+            # HPC material validation warning
+            silica_fume_in_library = False
+            if materials_df is not None and not materials_df.empty:
+                material_names = [str(m).lower() for m in materials_df["Material"].astype(str).tolist()]
+                silica_fume_in_library = any("silica fume" in name or "microsilica" in name for name in material_names)
+            
+            if not silica_fume_in_library:
+                st.warning("⚠️ Silica fume not found in materials library. HPC mixes will use placeholder values for CO₂ and cost factors.", icon="🔬")
         
         st.markdown("---")
         st.subheader("Aggregate Properties & Geometry")
@@ -1760,10 +1864,10 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                 total_w = w_co2 + w_cost + w_purpose
                 if total_w == 0:
                     st.warning("Weights cannot all be zero. Defaulting to balanced weights.")
-                    purpose_weights = {"co2": 0.33, "cost": 0.33, "purpose": 0.34}
+                    purpose_weights = {"w_co2": 0.33, "w_cost": 0.33, "w_purpose": 0.34}
                 else:
-                    purpose_weights = {"co2": w_co2 / total_w, "cost": w_cost / total_w, "purpose": w_purpose / total_w}
-                    st.caption(f"Normalized: CO₂ {purpose_weights['co2']:.1%}, Cost {purpose_weights['cost']:.1%}, Purpose {purpose_weights['purpose']:.1%}")
+                    purpose_weights = {"w_co2": w_co2 / total_w, "w_cost": w_cost / total_w, "w_purpose": w_purpose / total_w}
+                    st.caption(f"Normalized: CO₂ {purpose_weights['w_co2']:.1%}, Cost {purpose_weights['w_cost']:.1%}, Purpose {purpose_weights['w_purpose']:.1%}")
         elif enable_purpose_optimization and purpose == 'General':
              st.info("Purpose 'General' uses single-objective optimization (CO₂ or Cost).")
              enable_purpose_optimization = False
@@ -1846,6 +1950,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
     optimize_for = st.session_state.get("optimize_for_select", "CO₂ Emissions")
     optimize_cost = (optimize_for == "Cost")
     enable_purpose_optimization = st.session_state.get("enable_purpose", False)
+    enable_hpc = st.session_state.get("enable_hpc_toggle", False)
 
     sg_fa = st.session_state.get("sg_fa_manual", 2.65)
     moisture_fa = st.session_state.get("moisture_fa_manual", 1.0)
@@ -1867,6 +1972,16 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
     if calib_fine_fraction == 0.40 and not enable_calibration_overrides:
         calib_fine_fraction = None
     
+    # HPC parameters
+    if enable_hpc:
+        max_sf_frac = st.session_state.get("max_sf_frac", 0.10)
+        use_hpc_presets = st.session_state.get("use_hpc_presets", True)
+        hpc_wb_min = st.session_state.get("hpc_wb_min", 0.30)
+        
+        # Apply HPC presets to calibration parameters
+        if use_hpc_presets:
+            calib_wb_min = max(calib_wb_min, hpc_wb_min)
+    
     # Recalculate purpose weights from sliders if needed, using safe .get
     purpose_weights = purpose_profiles_data['General']['weights']
     if enable_purpose_optimization and purpose != 'General':
@@ -1876,7 +1991,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
         
         total_w = w_co2 + w_cost + w_purpose
         if total_w > 0:
-            purpose_weights = {"co2": w_co2 / total_w, "cost": w_cost / total_w, "purpose": w_purpose / total_w}
+            purpose_weights = {"w_co2": w_co2 / total_w, "w_cost": w_cost / total_w, "w_purpose": w_purpose / total_w}
 
     if 'user_text_input' not in st.session_state: st.session_state.user_text_input = ""
     if 'clarification_needed' not in st.session_state: st.session_state.clarification_needed = False
@@ -1889,6 +2004,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
         "target_slump": lambda v: st.slider("Target Slump (mm)", 25, 180, v if isinstance(v, int) else 100, 5),
         "cement_choice": lambda v: st.selectbox("Cement Type", CONSTANTS.CEMENT_TYPES, index=CONSTANTS.CEMENT_TYPES.index(v) if v in CONSTANTS.CEMENT_TYPES else 1),
         "nom_max": lambda v: st.selectbox("Nominal Max. Aggregate Size (mm)", [10, 12.5, 20, 40], index=[10, 12.5, 20, 40].index(v) if v in [10, 12.5, 20, 40] else 2),
+        "enable_hpc": lambda v: st.checkbox("Enable HPC", value=v if isinstance(v, bool) else False, help="Enable High Performance Concrete features"),
     }
 
     if run_button:
@@ -1907,6 +2023,14 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
             }
             st.info("Developer calibration overrides are enabled.", icon="🛠️")
             
+        # HPC-specific calibration
+        if enable_hpc:
+            hpc_calibration = {
+                "max_sf_frac": max_sf_frac,
+                "use_hpc_presets": use_hpc_presets
+            }
+            calibration_kwargs.update(hpc_calibration)
+            
         inputs = { 
             "grade": grade, "exposure": exposure, "cement_choice": cement_choice, 
             "nom_max": nom_max, "agg_shape": agg_shape, "target_slump": target_slump, 
@@ -1914,6 +2038,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
             "fine_zone": fine_zone, "material_props": material_props,
             "purpose": purpose, "enable_purpose_optimization": enable_purpose_optimization, 
             "purpose_weights": purpose_weights, "optimize_for": optimize_for,
+            "enable_hpc": enable_hpc,
             "calibration_kwargs": calibration_kwargs
         }
 
@@ -1979,7 +2104,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
         )
         st.session_state.run_generation_manual = False # Consume flag
 
-    # --- 5. DISPLAY RESULTS (Common to both modes) - UPDATED WITH HPC & PURPOSE ---
+    # --- 5. DISPLAY RESULTS (Common to both modes) ---
     if 'results' in st.session_state and st.session_state.results["success"]:
         results = st.session_state.results
         opt_df, opt_meta = results["opt_df"], results["opt_meta"]
@@ -2025,22 +2150,26 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
             reduction = (co2_base - co2_opt) / co2_base * 100 if co2_base > 0 else 0.0
             cost_savings = cost_base - cost_opt
 
-            # Show HPC notice if applicable
-            if opt_meta.get("hpc_enabled", False):
-                st.info("⚡ This is a High-Performance Concrete (HPC) mix. Water content and SCMs have been adjusted for advanced performance.", icon="⚡")
-
             st.subheader("Performance At a Glance")
             c1, c2, c3 = st.columns(3)
             c1.metric("🌱 CO₂ Reduction", f"{reduction:.1f}%", f"{co2_base - co2_opt:.1f} kg/m³ saved")
             c2.metric("💰 Cost Savings", f"₹{cost_savings:,.0f} / m³", f"{cost_savings/cost_base*100 if cost_base>0 else 0:.1f}% cheaper")
             c3.metric("♻️ SCM Content", f"{opt_meta['scm_total_frac']*100:.0f}%", f"{base_meta['scm_total_frac']*100:.0f}% in baseline", help="Supplementary Cementitious Materials (Fly Ash, GGBS) replace high-carbon cement.")
             
-            if opt_meta.get("purpose", "General") != "General":
+            if opt_meta.get("purpose", "General") != "General" or opt_meta.get("enable_hpc", False):
                 st.markdown("---")
+                if opt_meta.get("enable_hpc", False):
+                    c_h1, c_h2, c_h3 = st.columns(3)
+                    c_h1.metric("🧪 Silica Fume", f"{opt_meta.get('silica_fume', 0):.1f} kg/m³", f"{opt_meta.get('sf_frac', 0)*100:.1f}%")
+                    c_h2.metric("🔬 HPC Mode", "Enabled", help="High Performance Concrete with silica fume")
+                    if "purpose_metrics" in opt_meta and opt_meta["purpose_metrics"].get("pumpability_assessment"):
+                        c_h3.metric("📊 Pumpability", opt_meta["purpose_metrics"]["pumpability_assessment"])
+                
                 c_p1, c_p2, c_p3 = st.columns(3)
                 c_p1.metric("🛠️ Design Purpose", opt_meta['purpose'])
-                c_p2.metric("🎯 Composite Score", f"{opt_meta.get('composite_score', 0.0):.3f}", help="Normalized score (lower is better) balancing CO₂, Cost, and Purpose-Fit.")
-                c_p3.metric("⚠️ Purpose Penalty", f"{opt_meta.get('purpose_penalty', 0.0):.2f}", help="Penalty for deviation from purpose targets (lower is better).")
+                c_p2.metric("⚠️ Purpose Penalty", f"{opt_meta.get('purpose_penalty', 0.0):.2f}", help="Penalty for deviation from purpose targets (lower is better).")
+                if "composite_score" in opt_meta and not pd.isna(opt_meta["composite_score"]):
+                    c_p3.metric("🎯 Composite Score", f"{opt_meta.get('composite_score', 0.0):.3f}", help="Normalized score (lower is better).")
 
             st.markdown("---")
             col1, col2 = st.columns(2)
@@ -2176,7 +2305,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                             .apply(lambda s: [style_feasible_cell(v) for v in s], subset=['feasible'])
                             .format({
                                 "feasible": lambda v: "✅" if v else "❌", "wb": "{:.3f}", "flyash_frac": "{:.2f}", 
-                                "ggbs_frac": "{:.2f}", "co2": "{:.1f}", "cost": "{:.1f}",
+                                "ggbs_frac": "{:.2f}", "sf_frac": "{:.2f}", "co2": "{:.1f}", "cost": "{:.1f}",
                                 "purpose_penalty": "{:.2f}", "composite_score": "{:.4f}",
                                 "norm_co2": "{:.3f}", "norm_cost": "{:.3f}", "norm_purpose": "{:.3f}",
                             }),
@@ -2214,9 +2343,14 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                 ["w/b Ratio", f"{opt_meta['w_b']:.3f}", f"{base_meta['w_b']:.3f}"],
                 ["Binder (kg/m³)", f"{opt_meta['cementitious']:.1f}", f"{base_meta['cementitious']:.1f}"],
                 ["Purpose", f"{opt_meta.get('purpose', 'N/A')}", f"{base_meta.get('purpose', 'N/A')}"],
-                ["Purpose Penalty", f"{opt_meta.get('purpose_penalty', 'N/A')}", "—"],
                 ["Composite Score", f"{opt_meta.get('composite_score', 'N/A'):.3f}" if 'composite_score' in opt_meta and not pd.isna(opt_meta['composite_score']) else "N/A", "N/A"],
             ]
+            
+            # Add HPC-specific data if enabled
+            if opt_meta.get("enable_hpc", False):
+                summary_data.insert(5, ["Silica Fume (kg/m³)", f"{opt_meta.get('silica_fume', 0):.1f}", "N/A"])
+                summary_data.insert(6, ["Silica Fume %", f"{opt_meta.get('sf_frac', 0)*100:.1f}%", "N/A"])
+                
             summary_table = Table(summary_data, hAlign='LEFT', colWidths=[2*inch, 1.5*inch, 1.5*inch])
             summary_table.setStyle(TableStyle([('GRID', (0,0), (-1,-1), 1, colors.black), ('BACKGROUND', (0,0), (-1,0), colors.lightgrey)]))
             story.extend([Paragraph(f"Design for <b>{inputs['grade']} / {inputs['exposure']} Exposure</b>", styles['h2']), summary_table, Spacer(1, 0.2*inch)])
