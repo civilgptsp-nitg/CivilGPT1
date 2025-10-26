@@ -15,15 +15,3 @@ M-Sand,Manufactured Sand,0.8,2650,2.65,1.5,1.0,0.008
 20mm Coarse Aggregate,Crushed Stone 20mm,0.7,2700,2.70,0.5,0.8,0.008
 40mm Coarse Aggregate,Crushed Stone 40mm,0.65,2700,2.70,0.5,0.8,0.008
 River Sand,Natural River Sand,0.9,2650,2.65,2.0,1.2,0.005
-Crushed Sand,Crushed Stone Sand,0.85,2650,2.65,1.2,1.5,0.008
-Lightweight Aggregate,Expanded Clay Aggregate,3.5,850,0.85,5.0,15.0,0.15
-Steel Fibers,Hooked End Steel Fibers,65.0,7850,7.85,0.0,0.0,2.8
-Polypropylene Fibers,Monofilament Polypropylene Fibers,120.0,910,0.91,0.0,0.0,3.2
-VMA,Viscosity Modifying Admixture,85.0,1050,1.05,0.0,0.0,1.8
-Retarder,Set Retarding Admixture,38.0,1150,1.15,0.0,0.0,1.2
-Accelerator,Set Accelerating Admixture,42.0,1200,1.20,0.0,0.0,1.5
-Air Entraining Agent,Air Entraining Admixture,55.0,1020,1.02,0.0,0.0,1.0
-Shrinkage Reducing Admixture,Shrinkage Reducer,68.0,1080,1.08,0.0,0.0,2.2
-Microsphere Filler,Inert Microsphere Filler,12.0,1800,1.80,0.0,0.0,0.05
-Rice Husk Ash,Agricultural RHA Pozzolan,3.5,2200,2.20,1.0,5.0,0.04
-Limestone Powder,Calcium Carbonate Filler,2.5,2700,2.70,0.2,0.5,0.02
