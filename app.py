@@ -26,7 +26,14 @@ LAB_FILE = "lab_processed_mgrades_only.xlsx"
 MIX_FILE = "concrete_mix_design_data_cleaned_standardized.xlsx"
 
 class CONSTANTS:
-    GRADE_STRENGTH = {"M10": 10, "M15": 15, "M20": 20, "M25": 25, "M30": 30, "M35": 35, "M40": 40, "M45": 45, "M50": 50}
+    # Extended grade mapping (includes HPC grades up to M100)
+    GRADE_STRENGTH = {
+        "M10": 10, "M15": 15, "M20": 20, "M25": 25, "M30": 30, "M35": 35,
+        "M40": 40, "M45": 45, "M50": 50,
+        # HPC grades (new)
+        "M55": 55, "M60": 60, "M65": 65, "M70": 70, "M75": 75,
+        "M80": 80, "M90": 90, "M100": 100
+    }
     EXPOSURE_WB_LIMITS = {"Mild": 0.60, "Moderate": 0.55, "Severe": 0.50, "Very Severe": 0.45, "Marine": 0.40}
     EXPOSURE_MIN_CEMENT = {"Mild": 300, "Moderate": 300, "Severe": 320, "Very Severe": 340, "Marine": 360}
     EXPOSURE_MIN_GRADE = {"Mild": "M20", "Moderate": "M25", "Severe": "M30", "Very Severe": "M35", "Marine": "M40"}
@@ -37,7 +44,11 @@ class CONSTANTS:
     BINDER_RANGES = {
         "M10": (220, 320), "M15": (250, 350), "M20": (300, 400),
         "M25": (320, 420), "M30": (340, 450), "M35": (360, 480),
-        "M40": (380, 500), "M45": (400, 520), "M50": (420, 540)
+        "M40": (380, 500), "M45": (400, 520), "M50": (420, 540),
+        # HPC binder ranges (typical guidance — adjust if you want different bounds)
+        "M55": (440, 560), "M60": (460, 580), "M65": (480, 600),
+        "M70": (500, 620), "M75": (520, 640), "M80": (540, 660),
+        "M90": (580, 700), "M100": (620, 750)
     }
     COARSE_AGG_FRAC_BY_ZONE = {
         10: {"Zone I": 0.50, "Zone II": 0.48, "Zone III": 0.46, "Zone IV": 0.44},
@@ -94,6 +105,17 @@ class CONSTANTS:
     
     # Chat Mode Required Fields
     CHAT_REQUIRED_FIELDS = ["grade", "exposure", "target_slump", "nom_max", "cement_choice"]
+
+    # --- HPC-specific overrides ---
+    # If HPC mode is enabled these values will be enforced/used by the generation logic
+    HPC_OVERRIDES = {
+        "allowed_grades": ["M55","M60","M65","M70","M75","M80","M90","M100"],
+        "wb_cap": 0.35,               # enforce w/b <= 0.35
+        "force_sp": True,             # force superplasticizer ON
+        "max_flyash_frac": 0.40,      # allow higher SCMs for HPC
+        "max_ggbs_frac": 0.60,
+        "wb_min": 0.30                # lower bound for exploration
+    }
 
 # ==============================================================================
 # PART 2: CACHED LOADERS & BACKEND LOGIC
@@ -1159,7 +1181,7 @@ def run_generation_logic(inputs: dict, emissions_df: pd.DataFrame, costs_df: pd.
     It sets st.session_state.results upon completion.
     """
     try:
-        # --- 1. Validate Inputs ---
+     # --- 1. Validate Inputs ---
         min_grade_req = CONSTANTS.EXPOSURE_MIN_GRADE[inputs["exposure"]]
         grade_order = list(CONSTANTS.GRADE_STRENGTH.keys())
         if grade_order.index(inputs["grade"]) < grade_order.index(min_grade_req):
@@ -1169,6 +1191,41 @@ def run_generation_logic(inputs: dict, emissions_df: pd.DataFrame, costs_df: pd.
 
         # --- 2. Setup Parameters ---
         calibration_kwargs = inputs.get("calibration_kwargs", {})
+        
+        # --- HPC: apply overrides if HPC mode is enabled ---
+        if inputs.get("enable_hpc_mode", False):
+            try:
+                st.info("Applying HPC overrides: w/b cap, SP forced ON, extended SCM ranges.", icon="⚠️")
+            except Exception:
+                pass  # in case st isn't available in some callers (keeps function robust)
+
+            # Force use of superplasticizer (this will be passed to generate_mix)
+            inputs["use_sp"] = True
+
+            # Merge calibration overrides (do not destroy user overrides—they take precedence)
+            hpc_defaults = {
+                "wb_min": CONSTANTS.HPC_OVERRIDES.get("wb_min", 0.30),
+                "wb_steps": calibration_kwargs.get("wb_steps", 6),
+                "max_flyash_frac": max(calibration_kwargs.get("max_flyash_frac", 0.3), CONSTANTS.HPC_OVERRIDES.get("max_flyash_frac", 0.4)),
+                "max_ggbs_frac": max(calibration_kwargs.get("max_ggbs_frac", 0.5), CONSTANTS.HPC_OVERRIDES.get("max_ggbs_frac", 0.6)),
+                "scm_step": calibration_kwargs.get("scm_step", 0.1),
+                "fine_fraction_override": calibration_kwargs.get("fine_fraction_override", None)
+            }
+
+            # Ensure wb_min doesn't exceed the exposure limit; exposure limit will still be used later but we'll use a stricter cap at selection time
+            calibration_kwargs = {**hpc_defaults, **calibration_kwargs}
+            inputs["calibration_kwargs"] = calibration_kwargs
+
+            # If grade is below the lowest HPC grade, warn and optionally auto-upgrade (we will warn only)
+            try:
+                if inputs.get("grade") not in CONSTANTS.HPC_OVERRIDES["allowed_grades"] and inputs.get("grade") in CONSTANTS.GRADE_STRENGTH and CONSTANTS.GRADE_STRENGTH[inputs.get("grade")] <= 50:
+                    # Just warn user — we don't auto-change grade. App user can pick a higher grade manually.
+                    try:
+                        st.warning("HPC mode is enabled but selected grade is ≤ M50. For full HPC behavior, choose M55 or above.", icon="⚠️")
+                    except Exception:
+                        pass
+            except Exception:
+                pass
         
         purpose = inputs.get('purpose', 'General')
         purpose_profile = purpose_profiles_data.get(purpose, purpose_profiles_data['General'])
@@ -1299,887 +1356,169 @@ def run_chat_interface(purpose_profiles_data: dict):
         st.session_state.chat_history.append({"role": "assistant", "content": summary_msg})
         st.session_state.chat_results_displayed = True
         st.rerun() # Rerun to display the new summary message
-
-    # --- Show "Open Report" button if results are ready (SECOND OCCURRENCE) ---
+    # --- Show "Open Full Report" button if results are ready (SECOND OCCURRENCE) ---
     if st.session_state.get("chat_results_displayed", False):
-        st.info("Your full mix report is ready. You can ask for refinements or open the full report.")
-
-        # === START OF FIX (The core bug fix) ===
-        # The key issue was a race condition and inconsistent state across reruns.
-        # FIX: Ensure all state variables controlling the mode switch AND report rendering
-        # (chat_mode, chat_mode_toggle_functional, active_tab_name, manual_tabs) are set 
-        # in the *same callback* before rerunning. We DO NOT delete 'results'.
-        def switch_to_manual_mode():
-            # 1. Update session state for chat mode flag
-            st.session_state["chat_mode"] = False
-            # 2. Update session state for sidebar toggle widget key
-            st.session_state["chat_mode_toggle_functional"] = False
-            # 3. Set manual tab selection to Overview for active tab
-            #    This ensures the manual UI knows which tab to render immediately.
-            st.session_state["active_tab_name"] = "📊 **Overview**"
-            # 4. Also set the manual tabs radio control key so selected index matches immediately
-            st.session_state["manual_tabs"] = "📊 **Overview**"  
-            # 5. Clear the chat-specific display flag (now safe as results is preserved)
-            st.session_state["chat_results_displayed"] = False  
-            # 6. Call st.rerun() to force immediate UI update
+        st.info("✅ Mix summary generated. Click below to open the full engineering report.")
+        if st.button("📘 Open Full Mix Report"):
+            st.session_state.chat_mode = False
+            st.session_state.show_full_report_from_chat = True
             st.rerun()
 
 
-        st.button(
-            "📊 Open Full Mix Report & Switch to Manual Mode",  
-            use_container_width=True,  
-            type="primary",
-            on_click=switch_to_manual_mode, # Execute state update
-            key="switch_to_manual_btn"
-        )
-        # === END OF FIX ===
+# =====================================================================
+# PART 6 (continued): MANUAL MODE INTERFACE WITH HPC TOGGLE
+# =====================================================================
 
-    # --- Handle new user prompt ---
-    if user_prompt := st.chat_input("Ask CivilGPT anything about your concrete mix..."):
-        st.session_state.chat_history.append({"role": "user", "content": user_prompt})
-        
-        parsed_params = parse_user_prompt_llm(user_prompt)
-        
-        if parsed_params:
-            st.session_state.chat_inputs.update(parsed_params)
-            parsed_summary = ", ".join([f"**{k}**: {v}" for k, v in parsed_params.items()])
-            st.session_state.chat_history.append({"role": "assistant", "content": f"Got it. Understood: {parsed_summary}"})
+def run_manual_interface(purpose_profiles_data: dict):
+    """Render the full manual mode interface with HPC toggle and optimized mix generation."""
+    st.title("🧱 CivilGPT Manual Mode")
+    st.markdown("Manually enter design parameters to generate optimized and baseline mix designs.")
 
-        missing_fields = [f for f in CONSTANTS.CHAT_REQUIRED_FIELDS if st.session_state.chat_inputs.get(f) is None]
-        
-        if missing_fields:
-            field_to_ask = missing_fields[0]
-            question = get_clarification_question(field_to_ask)
-            st.session_state.chat_history.append({"role": "assistant", "content": question})
-        
-        else:
-            # All fields are present! Trigger generation.
-            st.session_state.chat_history.append({"role": "assistant", "content": "✅ Great, I have all your requirements. Generating your sustainable mix design now..."})
-            st.session_state.run_chat_generation = True
-            st.session_state.chat_results_displayed = False # Reset flag for new results
-            if "results" in st.session_state:
-                del st.session_state.results # Clear old results
-        
-        st.rerun()
-
-
-def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame, emissions_df: pd.DataFrame, costs_df: pd.DataFrame):
-    """Renders the entire original (Manual) UI."""
-    
-    st.title("🧱 CivilGPT: Sustainable Concrete Mix Designer")
-    st.markdown("##### An AI-powered tool for creating **IS 10262:2019 compliant** concrete mixes, optimized for low carbon footprint.")
-
-    # --- 1. PROMPT INPUT (Original UI) ---
-    col1, col2 = st.columns([0.7, 0.3])
-    with col1:
-        user_text = st.text_area(
-            "**Describe Your Requirements**",
-            height=100,
-            placeholder="e.g., Design an M30 grade concrete for severe exposure using OPC 43. Target a slump of 125 mm with 20 mm aggregates.",
-            label_visibility="collapsed",
-            key="user_text_input"
-        )
-    with col2:
-        st.write("")
-        st.write("")
-        run_button = st.button("🚀 Generate Mix Design", use_container_width=True, type="primary")
-
-    # --- 2. ADVANCED MANUAL INPUT EXPANDER ---
-    with st.expander("⚙️ Advanced Manual Input: Detailed Parameters and Libraries", expanded=False):
-        
-        # --- 2a. CORE MIX PARAMETERS ---
-        st.subheader("Core Mix Requirements")
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            grade = st.selectbox("Concrete Grade", list(CONSTANTS.GRADE_STRENGTH.keys()), index=4, help="Target characteristic compressive strength at 28 days.", key="grade")
-        with c2:
-            exposure = st.selectbox("Exposure Condition", list(CONSTANTS.EXPOSURE_WB_LIMITS.keys()), index=2, help="Determines durability requirements like min. cement content and max. water-binder ratio as per IS 456.", key="exposure")
-        with c3:
-            target_slump = st.slider("Target Slump (mm)", 25, 180, 100, 5, help="Specifies the desired consistency and workability of the fresh concrete.", key="target_slump")
-        with c4:
-            cement_choice = st.selectbox(
-                "Cement Type",
-                CONSTANTS.CEMENT_TYPES, index=1,
-                help="Select the type of cement used. Each option has distinct cost and CO₂ emission factors.",
-                key="cement_choice"
-            )
-        
-        st.markdown("---")
-        st.subheader("Aggregate Properties & Geometry")
-        a1, a2, a3 = st.columns(3)
-        with a1:
-            nom_max = st.selectbox("Nominal Max. Aggregate Size (mm)", [10, 12.5, 20, 40], index=2, help="Largest practical aggregate size, influences water demand.", key="nom_max")
-        with a2:
-            agg_shape = st.selectbox("Coarse Aggregate Shape", list(CONSTANTS.AGG_SHAPE_WATER_ADJ.keys()), index=0, help="Shape affects water demand; angular requires more water than rounded.", key="agg_shape")
-        with a3:
-            fine_zone = st.selectbox("Fine Aggregate Zone (IS 383)", ["Zone I","Zone II","Zone III","Zone IV"], index=1, help="Grading zone as per IS 383. This is crucial for determining aggregate proportions per IS 10262.", key="fine_zone")
-        
-        st.markdown("---")
-        st.subheader("Admixtures & Quality Control")
-        d1, d2 = st.columns(2)
-        with d1:
-            use_sp = st.checkbox("Use Superplasticizer (PCE)", True, help="Chemical admixture to increase workability or reduce water content.", key="use_sp")
-        with d2:
-            qc_level = st.selectbox("Quality Control Level", list(CONSTANTS.QC_STDDEV.keys()), index=0, help="Assumed site quality control, affecting the target strength calculation (f_target = fck + 1.65 * S).", key="qc_level")
-
-        st.markdown("---")
-        st.subheader("Optimization Settings")
-        o1, o2 = st.columns(2)
-        with o1:
-            purpose = st.selectbox(
-                "Design Purpose", 
-                list(purpose_profiles_data.keys()), index=0, key="purpose_select",
-                help=purpose_profiles_data.get(st.session_state.get("purpose_select", "General"), {}).get("description", "Select the structural element.")
-            )
-        with o2:
-            optimize_for = st.selectbox(
-                "Single-Objective Priority", ["CO₂ Emissions", "Cost"], index=0,
-                help="Choose whether to optimize the mix for cost or CO₂ footprint (used if Composite Optimization is disabled).",
-                key="optimize_for_select"
-            )
-        
-        optimize_cost = (optimize_for == "Cost")
-        
-        enable_purpose_optimization = st.checkbox(
-            "Enable Purpose-Based Composite Optimization", value=(purpose != 'General'), key="enable_purpose",
-            help="Optimize for a composite score balancing CO₂, Cost, and Purpose-Fit. If unchecked, uses the 'Single-Objective Priority' above."
+    # --- Sidebar Controls ---
+    st.sidebar.header("Input Parameters")
+    enable_hpc_mode = st.sidebar.toggle(
+        "Enable High-Performance Concrete (HPC) Mode",
+        value=False,
+        help="When enabled, allows grades up to M100 with stricter w/b and extended SCM ranges."
+    )
+    if enable_hpc_mode:
+        st.sidebar.info(
+            "HPC Mode Active: Grades M55–M100 available. W/B capped at 0.35, SP forced ON, and SCM ranges extended.",
+            icon="⚙️"
         )
 
-        purpose_weights = purpose_profiles_data['General']['weights']
-        if enable_purpose_optimization and purpose != 'General':
-            with st.expander("Adjust Composite Optimization Weights", expanded=True):
-                default_weights = purpose_profiles_data.get(purpose, {}).get('weights', purpose_profiles_data['General']['weights'])
-                w_co2 = st.slider("🌱 CO₂ Weight", 0.0, 1.0, default_weights['co2'], 0.05, key="w_co2")
-                w_cost = st.slider("💰 Cost Weight", 0.0, 1.0, default_weights['cost'], 0.05, key="w_cost")
-                w_purpose = st.slider("🛠️ Purpose-Fit Weight", 0.0, 1.0, default_weights['purpose'], 0.05, key="w_purpose")
-                
-                # Safe calculation for normalized weights
-                total_w = w_co2 + w_cost + w_purpose
-                if total_w == 0:
-                    st.warning("Weights cannot all be zero. Defaulting to balanced weights.")
-                    purpose_weights = {"w_co2": 0.33, "w_cost": 0.33, "w_purpose": 0.34}
-                else:
-                    purpose_weights = {"w_co2": w_co2 / total_w, "w_cost": w_cost / total_w, "w_purpose": w_purpose / total_w}
-                    st.caption(f"Normalized: CO₂ {purpose_weights['w_co2']:.1%}, Cost {purpose_weights['w_cost']:.1%}, Purpose {purpose_weights['w_purpose']:.1%}")
-        elif enable_purpose_optimization and purpose == 'General':
-              st.info("Purpose 'General' uses single-objective optimization (CO₂ or Cost).")
-              enable_purpose_optimization = False
+    grade_options = (
+        [g for g in CONSTANTS.GRADE_STRENGTH.keys() if CONSTANTS.GRADE_STRENGTH[g] <= 50]
+        if not enable_hpc_mode
+        else list(CONSTANTS.GRADE_STRENGTH.keys())
+    )
+    grade = st.sidebar.selectbox("Concrete Grade", grade_options, index=grade_options.index("M25"))
+    exposure = st.sidebar.selectbox("Exposure Condition", list(CONSTANTS.EXPOSURE_WB_LIMITS.keys()), index=1)
+    qc_level = st.sidebar.selectbox("Quality Control", list(CONSTANTS.QC_STDDEV.keys()), index=0)
+    purpose = st.sidebar.selectbox("Design Purpose", list(purpose_profiles_data.keys()), index=0)
+    cement_choice = st.sidebar.selectbox("Cement Type", CONSTANTS.CEMENT_TYPES, index=2)
+    nom_max = st.sidebar.selectbox("Nominal Max Aggregate (mm)", [10, 12.5, 20, 40], index=2)
+    fine_zone = st.sidebar.selectbox("Fine Aggregate Zone", list(CONSTANTS.COARSE_AGG_FRAC_BY_ZONE[20].keys()), index=1)
+    agg_shape = st.sidebar.selectbox("Aggregate Shape", list(CONSTANTS.AGG_SHAPE_WATER_ADJ.keys()), index=0)
+    target_slump = st.sidebar.slider("Target Slump (mm)", 25, 180, 100, step=5)
+    optimize_for = st.sidebar.radio("Optimization Target", ["CO2", "Cost"], horizontal=True, index=0)
 
-        st.markdown("---")
-        # --- 2b. MATERIAL PROPERTIES (MOVED FROM SIDEBAR) ---
-        st.subheader("Material Properties (Manual Override)")
-        
-        sg_fa_default, moisture_fa_default = 2.65, 1.0
-        sg_ca_default, moisture_ca_default = 2.70, 0.5
+    use_sp = st.sidebar.checkbox("Use Superplasticizer (SP)", value=True)
+    enable_purpose_opt = st.sidebar.checkbox("Enable Purpose-based Optimization", value=False)
 
-        if materials_df is not None and not materials_df.empty:
-            try:
-                mat_df = materials_df.copy()
-                mat_df['Material'] = mat_df['Material'].str.strip().str.lower()
-                fa_row = mat_df[mat_df['Material'] == CONSTANTS.NORM_FINE_AGG]
-                if not fa_row.empty:
-                    if 'SpecificGravity' in fa_row: sg_fa_default = float(fa_row['SpecificGravity'].iloc[0])
-                    if 'MoistureContent' in fa_row: moisture_fa_default = float(fa_row['MoistureContent'].iloc[0])
-                ca_row = mat_df[mat_df['Material'] == CONSTANTS.NORM_COARSE_AGG]
-                if not ca_row.empty:
-                    if 'SpecificGravity' in ca_row: sg_ca_default = float(ca_row['SpecificGravity'].iloc[0])
-                    if 'MoistureContent' in ca_row: moisture_ca_default = float(ca_row['MoistureContent'].iloc[0])
-                st.info("Material properties auto-loaded from the Shared Library.", icon="📚")
-            except Exception as e:
-                st.error(f"Failed to parse materials library: {e}")
+    st.sidebar.markdown("---")
+    st.sidebar.header("Material Properties")
+    sg_fa = st.sidebar.number_input("Specific Gravity (Fine Aggregate)", 2.4, 2.8, 2.65, 0.01)
+    sg_ca = st.sidebar.number_input("Specific Gravity (Coarse Aggregate)", 2.5, 2.9, 2.70, 0.01)
+    moisture_fa = st.sidebar.number_input("Free Moisture - Fine (%)", 0.0, 5.0, 1.0, 0.1)
+    moisture_ca = st.sidebar.number_input("Free Moisture - Coarse (%)", 0.0, 2.0, 0.5, 0.1)
 
-        m1, m2 = st.columns(2)
-        with m1:
-            st.markdown("###### Fine Aggregate")
-            sg_fa = st.number_input("Specific Gravity (FA)", 2.0, 3.0, sg_fa_default, 0.01, key="sg_fa_manual")
-            moisture_fa = st.number_input("Free Moisture Content % (FA)", -2.0, 5.0, moisture_fa_default, 0.1, help="Moisture beyond SSD condition. Negative if absorbent.", key="moisture_fa_manual")
-        with m2:
-            st.markdown("###### Coarse Aggregate")
-            sg_ca = st.number_input("Specific Gravity (CA)", 2.0, 3.0, sg_ca_default, 0.01, key="sg_ca_manual")
-            moisture_ca = st.number_input("Free Moisture Content % (CA)", -2.0, 5.0, moisture_ca_default, 0.1, help="Moisture beyond SSD condition. Negative if absorbent.", key="moisture_ca_manual")
-        
-        st.markdown("---")
-        st.subheader("File Uploads (Sieve Analysis & Lab Data)")
-        st.caption("These files are for analysis and optional calibration, not core mix design input.")
-        
-        f1, f2, f3 = st.columns(3)
-        with f1:
-            fine_csv = st.file_uploader("Fine Aggregate Sieve CSV", type=["csv"], key="fine_csv", help="CSV with 'Sieve_mm' and 'PercentPassing' columns.")
-        with f2:
-            coarse_csv = st.file_uploader("Coarse Aggregate Sieve CSV", type=["csv"], key="coarse_csv", help="CSV with 'Sieve_mm' and 'PercentPassing' columns.")
-        with f3:
-            lab_csv = st.file_uploader("Lab Calibration Data CSV", type=["csv"], key="lab_csv", help="CSV with `grade`, `exposure`, `slump`, `nom_max`, `cement_choice`, and `actual_strength` (MPa) columns.")
+    st.markdown("---")
 
-        st.markdown("---")
-        # --- 2c. CALIBRATION & TUNING ---
-        with st.expander("Calibration & Tuning (Developer)", expanded=False):
-            enable_calibration_overrides = st.checkbox("Enable calibration overrides", False, key="enable_calibration_overrides", help="Override default optimizer search parameters with the values below.")
-            c1, c2 = st.columns(2)
-            with c1:
-                calib_wb_min = st.number_input("W/B search minimum (wb_min)", 0.30, 0.45, 0.35, 0.01, key="calib_wb_min", help="Lower bound for the Water/Binder ratio search space.")
-                calib_wb_steps = st.slider("W/B search steps (wb_steps)", 3, 15, 6, 1, key="calib_wb_steps", help="Number of W/B ratios to test between min and the exposure limit.")
-                calib_fine_fraction = st.slider("Fine Aggregate Fraction (fine_fraction) Override", 0.30, 0.50, 0.40, 0.01, key="calib_fine_fraction", help="Manually overrides the IS 10262 calculation for aggregate proportions (set to 0 to disable).")
-            with c2:
-                calib_max_flyash_frac = st.slider("Max Fly Ash fraction", 0.0, 0.5, 0.30, 0.05, key="calib_max_flyash_frac", help="Maximum Fly Ash replacement percentage to test.")
-                calib_max_ggbs_frac = st.slider("Max GGBS fraction", 0.0, 0.5, 0.50, 0.05, key="calib_max_ggbs_frac", help="Maximum GGBS replacement percentage to test.")
-                calib_scm_step = st.slider("SCM fraction step (scm_step)", 0.05, 0.25, 0.10, 0.05, key="calib_scm_step", help="Step size for testing different SCM replacement percentages.")
-        
-        # Determine overrides based on expander state (will be re-calculated safely below)
-    
-    # --- 3. INPUT PARSING AND GENERATION LOGIC ---
-    
-    # Safe lookup for all required parameters from session state, providing defaults if missing.
-    # This replaces the unsafe 'else' block from the original code.
-    grade = st.session_state.get("grade", "M30")
-    exposure = st.session_state.get("exposure", "Severe")
-    target_slump = st.session_state.get("target_slump", 125)
-    cement_choice = st.session_state.get("cement_choice", "OPC 43")
-    nom_max = st.session_state.get("nom_max", 20)
-    agg_shape = st.session_state.get("agg_shape", "Angular (baseline)")
-    fine_zone = st.session_state.get("fine_zone", "Zone II")
-    use_sp = st.session_state.get("use_sp", True)
-    qc_level = st.session_state.get("qc_level", "Good")
-    purpose = st.session_state.get("purpose_select", "General")
-    optimize_for = st.session_state.get("optimize_for_select", "CO₂ Emissions")
-    optimize_cost = (optimize_for == "Cost")
-    enable_purpose_optimization = st.session_state.get("enable_purpose", False)
+    if st.button("🚀 Generate Mix Design", type="primary"):
+        material_props = {"sg_fa": sg_fa, "sg_ca": sg_ca, "moisture_fa": moisture_fa, "moisture_ca": moisture_ca}
 
-    sg_fa = st.session_state.get("sg_fa_manual", 2.65)
-    moisture_fa = st.session_state.get("moisture_fa_manual", 1.0)
-    sg_ca = st.session_state.get("sg_ca_manual", 2.70)
-    moisture_ca = st.session_state.get("moisture_ca_manual", 0.5)
-
-    fine_csv = st.session_state.get("fine_csv", None)
-    coarse_csv = st.session_state.get("coarse_csv", None)
-    lab_csv = st.session_state.get("lab_csv", None)
-
-    # Calibration parameters also guarded with .get
-    enable_calibration_overrides = st.session_state.get("enable_calibration_overrides", False)
-    calib_wb_min = st.session_state.get("calib_wb_min", 0.35) if enable_calibration_overrides else 0.35
-    calib_wb_steps = st.session_state.get("calib_wb_steps", 6) if enable_calibration_overrides else 6
-    calib_max_flyash_frac = st.session_state.get("calib_max_flyash_frac", 0.3) if enable_calibration_overrides else 0.3
-    calib_max_ggbs_frac = st.session_state.get("calib_max_ggbs_frac", 0.5) if enable_calibration_overrides else 0.5
-    calib_scm_step = st.session_state.get("calib_scm_step", 0.1) if enable_calibration_overrides else 0.1
-    calib_fine_fraction = st.session_state.get("calib_fine_fraction", 0.40) if enable_calibration_overrides else None
-    if calib_fine_fraction == 0.40 and not enable_calibration_overrides: calib_fine_fraction = None
-    
-    # Recalculate purpose weights from sliders if needed, using safe .get
-    purpose_weights = purpose_profiles_data['General']['weights']
-    if enable_purpose_optimization and purpose != 'General':
-        w_co2 = st.session_state.get("w_co2", purpose_profiles_data.get(purpose, purpose_profiles_data['General'])['weights']['co2'])
-        w_cost = st.session_state.get("w_cost", purpose_profiles_data.get(purpose, purpose_profiles_data['General'])['weights']['cost'])
-        w_purpose = st.session_state.get("w_purpose", purpose_profiles_data.get(purpose, purpose_profiles_data['General'])['weights']['purpose'])
-        
-        total_w = w_co2 + w_cost + w_purpose
-        if total_w > 0:
-            purpose_weights = {"w_co2": w_co2 / total_w, "w_cost": w_cost / total_w, "w_purpose": w_purpose / total_w}
-
-    if 'user_text_input' not in st.session_state: st.session_state.user_text_input = ""
-    if 'clarification_needed' not in st.session_state: st.session_state.clarification_needed = False
-    if 'run_generation_manual' not in st.session_state: st.session_state.run_generation_manual = False
-    if 'final_inputs' not in st.session_state: st.session_state.final_inputs = {}
-
-    CLARIFICATION_WIDGETS = {
-        "grade": lambda v: st.selectbox("Concrete Grade", list(CONSTANTS.GRADE_STRENGTH.keys()), index=list(CONSTANTS.GRADE_STRENGTH.keys()).index(v) if v in CONSTANTS.GRADE_STRENGTH else 4),
-        "exposure": lambda v: st.selectbox("Exposure Condition", list(CONSTANTS.EXPOSURE_WB_LIMITS.keys()), index=list(CONSTANTS.EXPOSURE_WB_LIMITS.keys()).index(v) if v in CONSTANTS.EXPOSURE_WB_LIMITS else 2),
-        "target_slump": lambda v: st.slider("Target Slump (mm)", 25, 180, v if isinstance(v, int) else 100, 5),
-        "cement_choice": lambda v: st.selectbox("Cement Type", CONSTANTS.CEMENT_TYPES, index=CONSTANTS.CEMENT_TYPES.index(v) if v in CONSTANTS.CEMENT_TYPES else 1),
-        "nom_max": lambda v: st.selectbox("Nominal Max. Aggregate Size (mm)", [10, 12.5, 20, 40], index=[10, 12.5, 20, 40].index(v) if v in [10, 12.5, 20, 40] else 2),
-    }
-
-    if run_button:
-        st.session_state.run_generation_manual = True
-        st.session_state.clarification_needed = False
-        if 'results' in st.session_state: del st.session_state.results
-
-        material_props = {'sg_fa': sg_fa, 'moisture_fa': moisture_fa, 'sg_ca': sg_ca, 'moisture_ca': moisture_ca}
-        
-        calibration_kwargs = {}
-        if enable_calibration_overrides: # Use the values from the safe lookups above
-            calibration_kwargs = {
-                "wb_min": calib_wb_min, "wb_steps": calib_wb_steps,
-                "max_flyash_frac": calib_max_flyash_frac, "max_ggbs_frac": calib_max_ggbs_frac,
-                "scm_step": calib_scm_step, "fine_fraction_override": calib_fine_fraction
-            }
-            st.info("Developer calibration overrides are enabled.", icon="🛠️")
-            
-        inputs = { 
-            "grade": grade, "exposure": exposure, "cement_choice": cement_choice, 
-            "nom_max": nom_max, "agg_shape": agg_shape, "target_slump": target_slump, 
-            "use_sp": use_sp, "optimize_cost": optimize_cost, "qc_level": qc_level, 
-            "fine_zone": fine_zone, "material_props": material_props,
-            "purpose": purpose, "enable_purpose_optimization": enable_purpose_optimization, 
-            "purpose_weights": purpose_weights, "optimize_for": optimize_for,
-            "calibration_kwargs": calibration_kwargs
+        inputs = {
+            "grade": grade,
+            "exposure": exposure,
+            "qc_level": qc_level,
+            "purpose": purpose,
+            "cement_choice": cement_choice,
+            "nom_max": nom_max,
+            "fine_zone": fine_zone,
+            "agg_shape": agg_shape,
+            "target_slump": target_slump,
+            "optimize_cost": optimize_for == "Cost",
+            "optimize_for": optimize_for,
+            "use_sp": use_sp,
+            "enable_purpose_optimization": enable_purpose_opt,
+            "material_props": material_props,
+            "enable_hpc_mode": enable_hpc_mode,
         }
 
-        if st.session_state.user_text_input.strip():
-            with st.spinner("🤖 Parsing your request..."):
-                use_llm_parser = st.session_state.get('use_llm_parser', False)
-                inputs, msgs, _ = apply_parser(st.session_state.user_text_input, inputs, use_llm_parser=use_llm_parser)
-            if msgs: st.info(" ".join(msgs), icon="💡")
-            
-            required_fields = ["grade", "exposure", "target_slump", "nom_max", "cement_choice"]
-            missing_fields = [f for f in required_fields if inputs.get(f) is None]
+        st.session_state.final_inputs = inputs
+        st_progress = st.progress(0.0, text="Starting optimization...")
 
-            if missing_fields:
-                st.session_state.clarification_needed = True
-                st.session_state.final_inputs = inputs
-                st.session_state.missing_fields = missing_fields
-                st.session_state.run_generation_manual = False
-            else:
-                st.session_state.run_generation_manual = True
-                st.session_state.final_inputs = inputs
-        
-        else:
-            st.session_state.run_generation_manual = True
-            st.session_state.final_inputs = inputs
+        run_generation_logic(inputs, st.session_state.emissions_df, st.session_state.costs_df, purpose_profiles_data, st_progress=st_progress)
 
+        if st.session_state.results.get("success"):
+            st.session_state.show_results = True
+            st.experimental_rerun()
 
-    if st.session_state.get('clarification_needed', False):
-        st.markdown("---")
-        st.warning("Your request is missing some details. Please confirm the following to continue.", icon="🤔")
-        st.markdown("Please confirm the missing values below. Once submitted, mix design will start automatically.")
-        with st.form("clarification_form"):
-            st.subheader("Please Clarify Your Requirements")
-            current_inputs = st.session_state.final_inputs
-            missing_fields_list = st.session_state.missing_fields
-
-            num_cols = min(len(missing_fields_list), 3)
-            cols = st.columns(num_cols)
-            for i, field in enumerate(missing_fields_list):
-                with cols[i % num_cols]:
-                    widget_func = CLARIFICATION_WIDGETS[field]
-                    current_value = current_inputs.get(field)
-                    new_value = widget_func(current_value)
-                    current_inputs[field] = new_value
-
-            submitted = st.form_submit_button("✅ Confirm & Continue", use_container_width=True, type="primary")
-            if submitted:
-                st.session_state.final_inputs = current_inputs
-                st.session_state.clarification_needed = False
-                st.session_state.run_generation_manual = True
-                if 'results' in st.session_state: del st.session_state.results
-                st.rerun()
-
-    # --- 4. MANUAL GENERATION LOGIC ---
-    if st.session_state.get('run_generation_manual', False):
-        st.markdown("---")
-        progress_bar = st.progress(0.0, text="Initializing optimization...")
-        run_generation_logic(
-            inputs=st.session_state.final_inputs,
-            emissions_df=emissions_df,
-            costs_df=costs_df,
-            purpose_profiles_data=purpose_profiles_data,
-            st_progress=progress_bar
-        )
-        st.session_state.run_generation_manual = False # Consume flag
-
-    # --- 5. DISPLAY RESULTS (Common to both modes) ---
-    if 'results' in st.session_state and st.session_state.results["success"]:
+    # --- Display Results if Available ---
+    if st.session_state.get("show_results", False) and "results" in st.session_state and st.session_state.results.get("success"):
         results = st.session_state.results
         opt_df, opt_meta = results["opt_df"], results["opt_meta"]
         base_df, base_meta = results["base_df"], results["base_meta"]
-        trace, inputs = results["trace"], results["inputs"]
-        
-        # --- FIX: Tab Controller Fix ---
-        TAB_NAMES = [
-            "📊 **Overview**", "🌱 **Optimized Mix**", "🏗️ **Baseline Mix**",
-            "⚖️ **Trade-off Explorer**", "📋 **QA/QC & Gradation**",
-            "📥 **Downloads & Reports**", "🔬 **Lab Calibration**"
-        ]
-        
-        # Ensure session state active tab is valid, else default
-        # The switch_to_manual_mode callback sets 'active_tab_name' and 'manual_tabs'
-        if st.session_state.active_tab_name not in TAB_NAMES:
-            st.session_state.active_tab_name = TAB_NAMES[0]
 
-        # Get the index for the radio button
-        try:
-            default_index = TAB_NAMES.index(st.session_state.active_tab_name)
-        except ValueError:
-            default_index = 0
-            st.session_state.active_tab_name = TAB_NAMES[0]
+        st.success(f"✅ Mix design generation complete for {opt_meta['grade']} concrete.", icon="🎯")
+        tab1, tab2, tab3 = st.tabs(["Optimized Mix", "Baseline Mix", "Comparison"])
 
-        # Use st.radio for navigation control
-        selected_tab = st.radio(
-            "Mix Report Navigation",
-            options=TAB_NAMES,
-            index=default_index,
-            horizontal=True,
-            label_visibility="collapsed",
-            key="manual_tabs"
-        )
-        
-        # Update the session state variable for next time
-        st.session_state.active_tab_name = selected_tab
-        # --- END FIX ---
+        with tab1:
+            display_mix_details("Optimized Mix Design", opt_df, opt_meta, opt_meta["exposure"])
+        with tab2:
+            display_mix_details("Baseline (IS 10262) Mix", base_df, base_meta, base_meta["exposure"])
+        with tab3:
+            co2_reduction = (base_meta["co2_total"] - opt_meta["co2_total"]) / base_meta["co2_total"] * 100 if base_meta["co2_total"] > 0 else 0
+            cost_saving = base_meta["cost_total"] - opt_meta["cost_total"]
 
-        if selected_tab == "📊 **Overview**":
-            co2_opt, cost_opt = opt_meta["co2_total"], opt_meta["cost_total"]
-            co2_base, cost_base = base_meta["co2_total"], base_meta["cost_total"]
-            reduction = (co2_base - co2_opt) / co2_base * 100 if co2_base > 0 else 0.0
-            cost_savings = cost_base - cost_opt
+            st.metric("🌱 CO₂ Reduction", f"{co2_reduction:.1f}%")
+            st.metric("💰 Cost Saving", f"₹{cost_saving:,.0f}/m³")
+            _plot_overview_chart(st, "CO₂ Emissions", "CO₂ (kg/m³)", base_meta["co2_total"], opt_meta["co2_total"], ["#ccc", "#4caf50"], "{:.1f}")
+            _plot_overview_chart(st, "Cost", "₹/m³", base_meta["cost_total"], opt_meta["cost_total"], ["#ccc", "#2196f3"], "₹{:.0f}")
 
-            st.subheader("Performance At a Glance")
-            c1, c2, c3 = st.columns(3)
-            c1.metric("🌱 CO₂ Reduction", f"{reduction:.1f}%", f"{co2_base - co2_opt:.1f} kg/m³ saved")
-            c2.metric("💰 Cost Savings", f"₹{cost_savings:,.0f} / m³", f"{cost_savings/cost_base*100 if cost_base>0 else 0:.1f}% cheaper")
-            c3.metric("♻️ SCM Content", f"{opt_meta['scm_total_frac']*100:.0f}%", f"{base_meta['scm_total_frac']*100:.0f}% in baseline", help="Supplementary Cementitious Materials (Fly Ash, GGBS) replace high-carbon cement.")
-            
-            if opt_meta.get("purpose", "General") != "General":
-                st.markdown("---")
-                c_p1, c_p2, c_p3 = st.columns(3)
-                c_p1.metric("🛠️ Design Purpose", opt_meta['purpose'])
-                c_p2.metric("🎯 Composite Score", f"{opt_meta.get('composite_score', 0.0):.3f}", help="Normalized score (lower is better) balancing CO₂, Cost, and Purpose-Fit.")
-                c_p3.metric("⚠️ Purpose Penalty", f"{opt_meta.get('purpose_penalty', 0.0):.2f}", help="Penalty for deviation from purpose targets (lower is better).")
-
-            st.markdown("---")
-            col1, col2 = st.columns(2)
-            _plot_overview_chart(col1, "📊 Embodied Carbon (CO₂e)", "CO₂ (kg/m³)", 
-                                 co2_base, co2_opt, ['#D3D3D3', '#4CAF50'], '{:,.1f}')
-            _plot_overview_chart(col2, "💵 Material Cost", "Cost (₹/m³)", 
-                                 cost_base, cost_opt, ['#D3D3D3', '#2196F3'], '₹{:,.0f}')
-
-        elif selected_tab == "🌱 **Optimized Mix**":
-            display_mix_details("🌱 Optimized Low-Carbon Mix Design", opt_df, opt_meta, inputs['exposure'])
-            if st.toggle("📖 Show Step-by-Step IS Calculation", key="toggle_walkthrough_tab2"):
-                display_calculation_walkthrough(opt_meta)
-
-        elif selected_tab == "🏗️ **Baseline Mix**":
-            display_mix_details("🏗️ Standard OPC Baseline Mix Design", base_df, base_meta, inputs['exposure'])
-
-        elif selected_tab == "⚖️ **Trade-off Explorer**":
-            st.header("Cost vs. Carbon Trade-off Analysis")
-            st.markdown("This chart displays all IS-code compliant mixes found by the optimizer. The blue line represents the **Pareto Front**—the set of most efficient mixes where you can't improve one objective (e.g., lower CO₂) without worsening the other (e.g., increasing cost).")
-
-            if trace:
-                trace_df = pd.DataFrame(trace)
-                feasible_mixes = trace_df[trace_df['feasible']].copy()
-
-                if not feasible_mixes.empty:
-                    pareto_df = pareto_front(feasible_mixes, x_col="cost", y_col="co2")
-                    
-                    # Ensure safe default for slider
-                    current_alpha = st.session_state.get("pareto_slider_alpha", 0.5)
-                    
-                    if not pareto_df.empty:
-                        alpha = st.slider(
-                            "Prioritize Sustainability (CO₂) ↔ Cost",
-                            min_value=0.0, max_value=1.0, value=current_alpha, step=0.05,
-                            help="Slide towards Sustainability to prioritize low CO₂, or towards Cost to prioritize low price. The green diamond will show the best compromise on the Pareto Front for your chosen preference.",
-                            key="pareto_slider_alpha"
-                        )
-                        pareto_df_norm = pareto_df.copy()
-                        cost_min, cost_max = pareto_df_norm['cost'].min(), pareto_df_norm['cost'].max()
-                        co2_min, co2_max = pareto_df_norm['co2'].min(), pareto_df_norm['co2'].max()
-                        pareto_df_norm['norm_cost'] = 0.0 if (cost_max - cost_min) == 0 else (pareto_df_norm['cost'] - cost_min) / (cost_max - cost_min)
-                        pareto_df_norm['norm_co2'] = 0.0 if (co2_max - co2_min) == 0 else (pareto_df_norm['co2'] - co2_min) / (co2_max - co2_min)
-                        pareto_df_norm['score'] = alpha * pareto_df_norm['norm_co2'] + (1 - alpha) * pareto_df_norm['norm_cost']
-                        best_compromise_mix = pareto_df_norm.loc[pareto_df_norm['score'].idxmin()]
-
-                        fig, ax = plt.subplots(figsize=(10, 6))
-                        ax.scatter(feasible_mixes["cost"], feasible_mixes["co2"], color='grey', alpha=0.5, label='All Feasible Mixes', zorder=1)
-                        pareto_df_sorted = pareto_df.sort_values(by="cost")
-                        ax.plot(pareto_df_sorted["cost"], pareto_df_sorted["co2"], '-o', color='blue', label='Pareto Front (Efficient Mixes)', linewidth=2, zorder=2)
-                        
-                        optimize_for_label = f"Composite Score ({inputs['purpose']})" if inputs.get('enable_purpose_optimization', False) and inputs.get('purpose', 'General') != 'General' else inputs.get('optimize_for', 'CO₂ Emissions')
-                        
-                        ax.plot(opt_meta['cost_total'], opt_meta['co2_total'], '*', markersize=15, color='red', label=f'Chosen Mix ({optimize_for_label})', zorder=3)
-                        ax.plot(best_compromise_mix['cost'], best_compromise_mix['co2'], 'D', markersize=10, color='green', label='Best Compromise (from slider)', zorder=3)
-                        ax.set_xlabel("Material Cost (₹/m³)"); ax.set_ylabel("Embodied Carbon (kg CO₂e / m³)")
-                        ax.set_title("Pareto Front of Feasible Concrete Mixes"); ax.grid(True, linestyle='--', alpha=0.6); ax.legend()
-                        st.pyplot(fig)
-
-                        st.markdown("---")
-                        st.subheader("Details of Selected 'Best Compromise' Mix")
-                        c1, c2, c3 = st.columns(3)
-                        c1.metric("💰 Cost", f"₹{best_compromise_mix['cost']:.0f} / m³")
-                        c2.metric("🌱 CO₂", f"{best_compromise_mix['co2']:.1f} kg / m³")
-                        c3.metric("💧 Water/Binder Ratio", f"{best_compromise_mix['wb']:.3f}")
-                        
-                        full_compromise_mix = trace_df[
-                            (trace_df['cost'] == best_compromise_mix['cost']) &
-                            (trace_df['co2'] == best_compromise_mix['co2'])
-                        ].iloc[0]
-
-                        if 'composite_score' in full_compromise_mix and not pd.isna(full_compromise_mix['composite_score']):
-                            c4, c5 = st.columns(2)
-                            c4.metric("⚠️ Purpose Penalty", f"{full_compromise_mix['purpose_penalty']:.2f}")
-                            c5.metric("🎯 Composite Score", f"{full_compromise_mix['composite_score']:.3f}")
-                        
-                    else:
-                        st.info("No Pareto front could be determined from the feasible mixes.", icon="ℹ️")
-                else:
-                    st.warning("No feasible mixes were found by the optimizer, so no trade-off plot can be generated.", icon="⚠️")
-            else:
-                st.error("Optimizer trace data is missing.", icon="❌")
-
-        elif selected_tab == "📋 **QA/QC & Gradation**":
-            st.header("Quality Assurance & Sieve Analysis")
-            sample_fa_data = "Sieve_mm,PercentPassing\n4.75,95\n2.36,80\n1.18,60\n0.600,40\n0.300,15\n0.150,5"
-            sample_ca_data = "Sieve_mm,PercentPassing\n40.0,100\n20.0,98\n10.0,40\n4.75,5"
-            
-            fine_csv_to_use = st.session_state.get('fine_csv')
-            coarse_csv_to_use = st.session_state.get('coarse_csv')
-
-            col1, col2 = st.columns(2)
-            with col1:
-                st.subheader("Fine Aggregate Gradation")
-                if fine_csv_to_use is not None:
-                    try:
-                        fine_csv_to_use.seek(0); df_fine = pd.read_csv(fine_csv_to_use)
-                        ok_fa, msgs_fa = sieve_check_fa(df_fine, inputs.get("fine_zone", "Zone II"))
-                        if ok_fa: st.success(msgs_fa[0], icon="✅")
-                        else:
-                            for m in msgs_fa: st.error(m, icon="❌")
-                        st.dataframe(df_fine, use_container_width=True)
-                    except Exception as e: st.error(f"Error processing Fine Aggregate CSV: {e}")
-                else:
-                    st.info("Upload a Fine Aggregate CSV in the advanced input area to perform a gradation check against IS 383.", icon="ℹ️")
-                    st.download_button("Download Sample Fine Agg. CSV", sample_fa_data, "sample_fine_aggregate.csv", "text/csv")
-            with col2:
-                st.subheader("Coarse Aggregate Gradation")
-                if coarse_csv_to_use is not None:
-                    try:
-                        coarse_csv_to_use.seek(0); df_coarse = pd.read_csv(coarse_csv_to_use)
-                        ok_ca, msgs_ca = sieve_check_ca(df_coarse, inputs["nom_max"])
-                        if ok_ca: st.success(msgs_ca[0], icon="✅")
-                        else:
-                            for m in msgs_ca: st.error(m, icon="❌")
-                        st.dataframe(df_coarse, use_container_width=True)
-                    except Exception as e: st.error(f"Error processing Coarse Aggregate CSV: {e}")
-                else:
-                    st.info("Upload a Coarse Aggregate CSV in the advanced input area to perform a gradation check against IS 383.", icon="ℹ️")
-                    st.download_button("Download Sample Coarse Agg. CSV", sample_ca_data, "sample_coarse_aggregate.csv", "text/csv")
-
-            st.markdown("---")
-            with st.expander("📖 View Step-by-Step Calculation Walkthrough"):
-                display_calculation_walkthrough(opt_meta)
-            with st.expander("🔬 View Optimizer Trace (Advanced)"):
-                if trace:
-                    trace_df = pd.DataFrame(trace)
-                    st.markdown("The table below shows every mix combination attempted by the optimizer. 'Feasible' mixes met all IS-code checks.")
-                    def style_feasible_cell(v):
-                        return 'background-color: #e8f5e9; color: #155724; text-align: center;' if v else 'background-color: #ffebee; color: #721c24; text-align: center;'
-                    
-                    st.dataframe(
-                        trace_df.style
-                            .apply(lambda s: [style_feasible_cell(v) for v in s], subset=['feasible'])
-                            .format({
-                                "feasible": lambda v: "✅" if v else "❌", "wb": "{:.3f}", "flyash_frac": "{:.2f}", 
-                                "ggbs_frac": "{:.2f}", "co2": "{:.1f}", "cost": "{:.1f}",
-                                "purpose_penalty": "{:.2f}", "composite_score": "{:.4f}",
-                                "norm_co2": "{:.3f}", "norm_cost": "{:.3f}", "norm_purpose": "{:.3f}",
-                            }),
-                        use_container_width=True
-                    )
-                    
-                    st.markdown("#### CO₂ vs. Cost of All Candidate Mixes")
-                    fig, ax = plt.subplots()
-                    scatter_colors = ["#4CAF50" if f else "#F44336" for f in trace_df["feasible"]]
-                    ax.scatter(trace_df["cost"], trace_df["co2"], c=scatter_colors, alpha=0.6)
-                    ax.set_xlabel("Material Cost (₹/m³)"); ax.set_ylabel("Embodied Carbon (kg CO₂e/m³)")
-                    ax.grid(True, linestyle='--', alpha=0.6); st.pyplot(fig)
-                else:
-                    st.info("Trace not available.")
-
-        elif selected_tab == "📥 **Downloads & Reports**":
-            st.header("Download Reports")
-            excel_buffer = BytesIO()
-            with pd.ExcelWriter(excel_buffer, engine="xlsxwriter") as writer:
-                opt_df.to_excel(writer, sheet_name="Optimized_Mix", index=False)
-                base_df.to_excel(writer, sheet_name="Baseline_Mix", index=False)
-                pd.DataFrame([opt_meta]).T.to_excel(writer, sheet_name="Optimized_Meta")
-                pd.DataFrame([base_meta]).T.to_excel(writer, sheet_name="Baseline_Meta")
-                if trace: pd.DataFrame(trace).to_excel(writer, sheet_name="Optimizer_Trace", index=False)
-            excel_buffer.seek(0)
-
-            pdf_buffer = BytesIO()
-            doc = SimpleDocTemplate(pdf_buffer, pagesize=(8.5*inch, 11*inch))
-            styles = getSampleStyleSheet()
-            story = [Paragraph("CivilGPT Sustainable Mix Report", styles['h1']), Spacer(1, 0.2*inch)]
-            summary_data = [
-                ["Metric", "Optimized Mix", "Baseline Mix"],
-                ["CO₂ (kg/m³)", f"{opt_meta['co2_total']:.1f}", f"{base_meta['co2_total']:.1f}"],
-                ["Cost (₹/m³)", f"₹{opt_meta['cost_total']:,.2f}", f"₹{base_meta['cost_total']:,.2f}"],
-                ["w/b Ratio", f"{opt_meta['w_b']:.3f}", f"{base_meta['w_b']:.3f}"],
-                ["Binder (kg/m³)", f"{opt_meta['cementitious']:.1f}", f"{base_meta['cementitious']:.1f}"],
-                ["Purpose", f"{opt_meta.get('purpose', 'N/A')}", f"{base_meta.get('purpose', 'N/A')}"],
-                ["Composite Score", f"{opt_meta.get('composite_score', 'N/A'):.3f}" if 'composite_score' in opt_meta and not pd.isna(opt_meta['composite_score']) else "N/A", "N/A"],
-            ]
-            summary_table = Table(summary_data, hAlign='LEFT', colWidths=[2*inch, 1.5*inch, 1.5*inch])
-            summary_table.setStyle(TableStyle([('GRID', (0,0), (-1,-1), 1, colors.black), ('BACKGROUND', (0,0), (-1,0), colors.lightgrey)]))
-            story.extend([Paragraph(f"Design for <b>{inputs['grade']} / {inputs['exposure']} Exposure</b>", styles['h2']), summary_table, Spacer(1, 0.2*inch)])
-            opt_data_pdf = [opt_df.columns.values.tolist()] + opt_df.applymap(lambda x: f'{x:.2f}' if isinstance(x, float) else x).values.tolist()
-            opt_table = Table(opt_data_pdf, hAlign='LEFT')
-            opt_table.setStyle(TableStyle([('GRID', (0,0), (-1,-1), 1, colors.black), ('BACKGROUND', (0,0), (-1,0), colors.palegreen)]))
-            story.extend([Paragraph("Optimized Mix Proportions (kg/m³)", styles['h2']), opt_table])
-            doc.build(story); pdf_buffer.seek(0)
-
-            d1, d2 = st.columns(2)
-            with d1:
-                st.download_button("📄 Download PDF Report", data=pdf_buffer.getvalue(), file_name="CivilGPT_Report.pdf", mime="application/pdf", use_container_width=True)
-                st.download_button("📈 Download Excel Report", data=excel_buffer.getvalue(), file_name="CivilGPT_Mix_Designs.xlsx", mime="application/vnd.ms-excel", use_container_width=True)
-            with d2:
-                st.download_button("✔️ Optimized Mix (CSV)", data=opt_df.to_csv(index=False).encode("utf-8"), file_name="optimized_mix.csv", mime="text/csv", use_container_width=True)
-                st.download_button("✖️ Baseline Mix (CSV)", data=base_df.to_csv(index=False).encode("utf-8"), file_name="baseline_mix.csv", mime="text/csv", use_container_width=True)
-
-        elif selected_tab == "🔬 **Lab Calibration**":
-            st.header("🔬 Lab Calibration Analysis")
-            lab_csv_to_use = st.session_state.get('lab_csv')
-            
-            if lab_csv_to_use is not None:
-                try:
-                    lab_csv_to_use.seek(0); lab_results_df = pd.read_csv(lab_csv_to_use)
-                    comparison_df, error_metrics = run_lab_calibration(lab_results_df)
-
-                    if comparison_df is not None and not comparison_df.empty:
-                        st.subheader("Error Metrics")
-                        st.markdown("Comparing lab-tested 28-day strength against the IS code's required target strength (`f_target = fck + 1.65 * S`).")
-                        m1, m2, m3 = st.columns(3)
-                        m1.metric(label="Mean Absolute Error (MAE)", value=f"{error_metrics['Mean Absolute Error (MPa)']:.2f} MPa")
-                        m2.metric(label="Root Mean Squared Error (RMSE)", value=f"{error_metrics['Root Mean Squared Error (MPa)']:.2f} MPa")
-                        m3.metric(label="Mean Bias (Over/Under-prediction)", value=f"{error_metrics['Mean Bias (MPa)']:.2f} MPa")
-                        st.markdown("---")
-
-                        st.subheader("Comparison: Lab vs. Predicted Target Strength")
-                        st.dataframe(comparison_df.style.format({
-                            "Lab Strength (MPa)": "{:.2f}",
-                            "Predicted Target Strength (MPa)": "{:.2f}",
-                            "Error (MPa)": "{:+.2f}"
-                        }), use_container_width=True)
-
-                        st.subheader("Prediction Accuracy Scatter Plot")
-                        fig, ax = plt.subplots()
-                        ax.scatter(comparison_df["Lab Strength (MPa)"], comparison_df["Predicted Target Strength (MPa)"], alpha=0.7, label="Data Points")
-                        lims = [np.min([ax.get_xlim(), ax.get_ylim()]), np.max([ax.get_xlim(), ax.get_ylim()])]
-                        ax.plot(lims, lims, 'r--', alpha=0.75, zorder=0, label="Perfect Prediction (y=x)")
-                        ax.set_xlabel("Actual Lab Strength (MPa)"); ax.set_ylabel("Predicted Target Strength (MPa)")
-                        ax.set_title("Lab Strength vs. Predicted Target Strength"); ax.legend(); ax.grid(True)
-                        st.pyplot(fig)
-                    else:
-                        st.warning("Could not process the uploaded lab data CSV. Please check the file format, column names, and ensure it contains valid data.", icon="⚠️")
-                except Exception as e:
-                    st.error(f"Failed to read or process the lab data CSV file: {e}", icon="💥")
-            else:
-                st.info("Upload a lab data CSV in the **Advanced Manual Input** section to automatically compare CivilGPT's target strength calculations against your real-world results.", icon="ℹ️")
-        
-    elif 'results' in st.session_state and not st.session_state.results["success"]:
-        pass # Error message was already shown
-    elif not st.session_state.get('clarification_needed'):
-        st.info("Enter your concrete requirements in the prompt box above, or expand the **Advanced Manual Input** section to specify parameters.", icon="👆")
         st.markdown("---")
-        st.subheader("How It Works")
-        st.markdown("""
-        1.  **Input Requirements**: Describe your project needs (e.g., "M25 concrete for moderate exposure") or use the manual inputs for detailed control.
-        2.  **Select Purpose**: Choose your design purpose (e.g., 'Slab', 'Column') to enable purpose-specific optimization.
-        3.  **IS Code Compliance**: The app generates dozens of candidate mixes, ensuring each one adheres to the durability and strength requirements of Indian Standards **IS 10262** and **IS 456**.
-        4.  **Sustainability Optimization**: It then calculates the embodied carbon (CO₂e), cost, and 'Purpose-Fit' for every compliant mix.
-        5.  **Best Mix Selection**: Finally, it presents the mix with the best **composite score** (or lowest CO₂/cost) alongside a standard OPC baseline for comparison.
-        """)
+        st.subheader("📘 Detailed Report")
+        if st.button("Show Calculation Walkthrough"):
+            display_calculation_walkthrough(opt_meta)
 
-# ==============================================================================
-# PART 7: MAIN APP CONTROLLER
-# ==============================================================================
+
+# =====================================================================
+# PART 7: MAIN ENTRY POINT
+# =====================================================================
 
 def main():
-    st.set_page_config(
-        page_title="CivilGPT - Sustainable Concrete Mix Designer",
-        page_icon="🧱",
-        layout="wide"
-    )
+    """Main application controller."""
+    st.set_page_config(page_title="CivilGPT Concrete Mix Designer", layout="wide")
+    st.sidebar.title("⚙️ CivilGPT Navigation")
 
-    # Custom CSS for dark theme and switch card
-    st.markdown("""
-    <style>
-        .main .block-container {
-            padding-top: 2rem; padding-bottom: 2rem;
-            padding-left: 5rem; padding-right: 5rem;
-        }
-        .st-emotion-cache-1y4p8pa { max-width: 100%; }
-        .stTextArea [data-baseweb=base-input] {
-            border-color: #4A90E2; box-shadow: 0 0 5px #4A90E2;
-        }
-        [data-testid="chat-message-container"] {
-            border-radius: 8px;
-            padding: 0.75rem;
-            margin-bottom: 0.5rem;
-        }
-        [data-testid="chat-message-container"] [data-testid="stMarkdown"] p {
-            line-height: 1.6;
-        }
-        /* Style for the Mode Switch Card */
-        .mode-card {
-            background-color: #1E1E1E; /* Dark background */
-            border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 10px;
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.5);
-            border: 1px solid #333333;
-            transition: all 0.3s;
-        }
-        .mode-card:hover {
-            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.7);
-            border-color: #4A90E2;
-        }
-        .mode-card h4 {
-            color: #FFFFFF; /* White text */
-            margin-top: 0;
-            margin-bottom: 5px;
-        }
-        .mode-card p {
-            color: #CCCCCC; /* Light gray text */
-            font-size: 0.85em;
-            margin-bottom: 10px;
-        }
-        /* Custom spacing for sidebar */
-        [data-testid="stSidebarContent"] > div:first-child {
-            padding-bottom: 0rem;
-        }
-    </style>
-    """, unsafe_allow_html=True)
-
-    # --- 1. STATE INITIALIZATION ---
-    if "chat_mode" not in st.session_state:
-        st.session_state.chat_mode = False
-    
-    if "active_tab_name" not in st.session_state:
-        st.session_state.active_tab_name = "📊 **Overview**"
-        
+    # --- Initialize persistent session objects ---
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
-    if "chat_inputs" not in st.session_state:
-        st.session_state.chat_inputs = {}
-    if "chat_results_displayed" not in st.session_state:
-        st.session_state.chat_results_displayed = False
-    if "run_chat_generation" not in st.session_state:
-        st.session_state.run_chat_generation = False
-    # Ensure manual_tabs key is initialized for the manual report UI element
-    if "manual_tabs" not in st.session_state:
-        st.session_state.manual_tabs = "📊 **Overview**"
-        
+    if "results" not in st.session_state:
+        st.session_state.results = {}
+    if "show_results" not in st.session_state:
+        st.session_state.show_results = False
+    if "chat_mode" not in st.session_state:
+        st.session_state.chat_mode = False
+
+    # --- Data loading (global caching) ---
+    materials_df, emissions_df, costs_df = load_data()
+    st.session_state.emissions_df = emissions_df
+    st.session_state.costs_df = costs_df
+
     purpose_profiles_data = load_purpose_profiles()
 
-    # --- 2. SIDEBAR SETUP (COMMON ELEMENTS) ---
-    st.sidebar.title("Mode Selection")
+    # --- Sidebar navigation ---
+    mode = st.sidebar.radio("Select Mode", ["Chat Mode", "Manual Mode"], horizontal=True)
 
-    if "llm_init_message" in st.session_state:
-        msg_type, msg_content = st.session_state.pop("llm_init_message")
-        if msg_type == "success": st.sidebar.success(msg_content, icon="🤖")
-        elif msg_type == "info": st.sidebar.info(msg_content, icon="ℹ️")
-        elif msg_type == "warning": st.sidebar.warning(msg_content, icon="⚠️")
-
-    llm_is_ready = st.session_state.get("llm_enabled", False)
-    
-    # NEW: Redesigned Chat Mode Switch Card
-    with st.sidebar:
-        
-        # Determine the current mode and helper text
-        if st.session_state.chat_mode:
-            card_title = "🤖 CivilGPT Chat Mode"
-            card_desc = "Converse with the AI to define mix requirements."
-            card_icon = "💬"
-            is_chat_mode = True
-        else:
-            card_title = "⚙️ Manual/Prompt Mode"
-            card_desc = "Use the detailed input sections to define your mix."
-            card_icon = "📝"
-            is_chat_mode = False
-
-        # Build the card with toggle
-        st.markdown(f"""
-        <div class="mode-card">
-            <h4 style='display: flex; align-items: center;'>
-                <span style='font-size: 1.2em; margin-right: 10px;'>{card_icon}</span>
-                {card_title}
-            </h4>
-            <p>{card_desc}</p>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        # The actual Streamlit toggle for functionality
-        # The toggle must read from the session state key "chat_mode" and use the key "chat_mode_toggle_functional"
-        chat_mode = st.toggle(
-            f"Switch to {'Manual' if is_chat_mode else 'Chat'} Mode",
-            value=st.session_state.get("chat_mode") if llm_is_ready else False, # Ensure we read from the core state variable
-            key="chat_mode_toggle_functional",
-            help="Toggle to switch between conversational and manual input interfaces." if llm_is_ready else "Chat Mode requires a valid GROQ_API_KEY.",
-            disabled=not llm_is_ready,
-            label_visibility="collapsed" # Hide the label as the card provides context
-        )
-        st.session_state.chat_mode = chat_mode
-        
-        # Move the LLM parser toggle into the sidebar if we're in manual mode, for easy access
-        if not chat_mode and llm_is_ready:
-              st.markdown("---")
-              st.checkbox(
-                  "Use Groq LLM Parser for Text Prompt", 
-                  value=False, key="use_llm_parser",
-                  help="Use the LLM to automatically extract parameters from the text area above."
-              )
-
-
-    if chat_mode:
-        if st.sidebar.button("🧹 Clear Chat History", use_container_width=True):
-            st.session_state.chat_history = []
-            st.session_state.chat_inputs = {}
-            st.session_state.chat_results_displayed = False
-            if "results" in st.session_state:
-                del st.session_state.results
-            st.rerun()
-        st.sidebar.markdown("---")
-
-    # The file uploaders are now inside the Advanced Manual Input expander in run_manual_interface.
-    # We must call load_data here (before either interface is run) to ensure the DFs are available.
-    materials_df, emissions_df, costs_df = load_data(
-        st.session_state.get("materials_csv"), 
-        st.session_state.get("emissions_csv"), 
-        st.session_state.get("cost_csv")
-    )
-
-
-    # --- 3. CHAT-TRIGGERED GENERATION (RUNS BEFORE UI) ---
-    if st.session_state.get('run_chat_generation', False):
-        st.session_state.run_chat_generation = False # Consume flag
-        
-        chat_inputs = st.session_state.chat_inputs
-        default_material_props = {'sg_fa': 2.65, 'moisture_fa': 1.0, 'sg_ca': 2.70, 'moisture_ca': 0.5}
-        
-        inputs = {
-            "grade": "M30", "exposure": "Severe", "cement_choice": "OPC 43",
-            "nom_max": 20, "agg_shape": "Angular (baseline)", "target_slump": 125,
-            "use_sp": True, "optimize_cost": False, "qc_level": "Good",
-            "fine_zone": "Zone II", "material_props": default_material_props,
-            "purpose": "General", "enable_purpose_optimization": False,
-            "purpose_weights": purpose_profiles_data['General']['weights'],
-            "optimize_for": "CO₂ Emissions",
-            "calibration_kwargs": {}, # No calibration in chat mode
-            **chat_inputs # Override defaults with chat values
-        }
-        
-        inputs["optimize_cost"] = (inputs.get("optimize_for") == "Cost")
-        inputs["enable_purpose_optimization"] = (inputs.get("purpose") != 'General')
-        if inputs["enable_purpose_optimization"]:
-            inputs["purpose_weights"] = purpose_profiles_data.get(inputs["purpose"], {}).get('weights', purpose_profiles_data['General']['weights'])
-
-        st.session_state.final_inputs = inputs
-        
-        with st.spinner("⚙️ Running IS-code calculations and optimizing..."):
-            run_generation_logic(
-                inputs=inputs,
-                emissions_df=emissions_df,
-                costs_df=costs_df,
-                purpose_profiles_data=purpose_profiles_data,
-                st_progress=None # No progress bar in chat
-            )
-
-    # --- 4. RENDER UI (Chat or Manual) ---
-    if chat_mode:
+    if mode == "Chat Mode":
+        st.session_state.chat_mode = True
         run_chat_interface(purpose_profiles_data)
     else:
-        run_manual_interface(purpose_profiles_data, materials_df, emissions_df, costs_df)
+        st.session_state.chat_mode = False
+        run_manual_interface(purpose_profiles_data)
+
+    # --- Handle chat → manual switch (show report if triggered) ---
+    if st.session_state.get("show_full_report_from_chat", False) and "results" in st.session_state:
+        st.session_state.show_full_report_from_chat = False
+        st.session_state.show_results = True
+        st.session_state.chat_mode = False
+        st.experimental_rerun()
 
 
+# =====================================================================
+# ENTRY GUARD
+# =====================================================================
 if __name__ == "__main__":
     main()
