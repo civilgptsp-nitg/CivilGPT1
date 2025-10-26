@@ -1,22 +1,136 @@
 {
   "General": {
-    "description": "Balanced mix for general concrete applications.",
-    "weights": { "co2": 0.33, "cost": 0.33, "purpose": 0.34 },
-    "target_ranges": { "scm_min": 0.1, "scm_max": 0.5 }
+    "description": "A balanced, default mix. Follows IS code minimums without specific optimization bias.",
+    "wb_limit": 1.0,
+    "scm_limit": 0.5,
+    "min_binder": 0.0,
+    "weights": {"co2": 0.4, "cost": 0.4, "purpose": 0.2},
+    "hard_constraints": {},
+    "target_ranges": {
+      "scm_min": 0.1,
+      "scm_max": 0.5,
+      "w_b_max": 0.6
+    }
   },
   "Slab": {
-    "description": "Flat structural element, focus on workability and shrinkage.",
-    "weights": { "co2": 0.3, "cost": 0.2, "purpose": 0.5 },
-    "target_ranges": { "slump_min": 100, "slump_max": 150 }
+    "description": "Prioritizes workability (slump) and cost-effectiveness. Strength is often not the primary driver.",
+    "wb_limit": 0.55,
+    "scm_limit": 0.5,
+    "min_binder": 300,
+    "weights": {"co2": 0.3, "cost": 0.5, "purpose": 0.2},
+    "hard_constraints": {
+      "max_deflection_proxy": 0.8,
+      "min_modulus": 25000
+    },
+    "target_ranges": {
+      "slump_min": 100,
+      "slump_max": 150,
+      "scm_min": 0.2,
+      "scm_max": 0.5
+    }
   },
   "Beam": {
-    "description": "Linear structural member; prioritize strength and stiffness.",
-    "weights": { "co2": 0.25, "cost": 0.25, "purpose": 0.5 },
-    "target_ranges": { "fck_min": 25, "fck_max": 40 }
+    "description": "Prioritizes strength (modulus) and durability. Often heavily reinforced.",
+    "wb_limit": 0.50,
+    "scm_limit": 0.4,
+    "min_binder": 320,
+    "weights": {"co2": 0.4, "cost": 0.2, "purpose": 0.4},
+    "hard_constraints": {
+      "min_compressive_strength": 30,
+      "max_shrinkage_risk": 15.0
+    },
+    "target_ranges": {
+      "fck_min": 25,
+      "fck_max": 40,
+      "scm_min": 0.15,
+      "scm_max": 0.4
+    }
   },
   "Column": {
-    "description": "Compression member; prioritize compressive strength and low creep.",
-    "weights": { "co2": 0.2, "cost": 0.3, "purpose": 0.5 },
-    "target_ranges": { "fck_min": 30, "fck_max": 50 }
+    "description": "Prioritizes high compressive strength and durability. Congestion is common.",
+    "wb_limit": 0.45,
+    "scm_limit": 0.35,
+    "min_binder": 340,
+    "weights": {"co2": 0.3, "cost": 0.2, "purpose": 0.5},
+    "hard_constraints": {
+      "min_compressive_strength": 35,
+      "max_shrinkage_risk": 12.0
+    },
+    "target_ranges": {
+      "fck_min": 30,
+      "fck_max": 50,
+      "scm_min": 0.1,
+      "scm_max": 0.35
+    }
+  },
+  "Pavement": {
+    "description": "Prioritizes durability, flexural strength (fatigue), and abrasion resistance. Cost is a major factor.",
+    "wb_limit": 0.45,
+    "scm_limit": 0.4,
+    "min_binder": 340,
+    "weights": {"co2": 0.3, "cost": 0.4, "purpose": 0.3},
+    "hard_constraints": {
+      "min_flexural_strength": 4.5,
+      "fatigue_proxy_min": 0.7,
+      "max_wb_for_frost": 0.45
+    },
+    "target_ranges": {
+      "fck_min": 25,
+      "fck_max": 35,
+      "scm_min": 0.2,
+      "scm_max": 0.4
+    }
+  },
+  "Precast": {
+    "description": "Prioritizes high early strength (for form stripping), surface finish, and cost (reproducibility).",
+    "wb_limit": 0.45,
+    "scm_limit": 0.3,
+    "min_binder": 360,
+    "weights": {"co2": 0.2, "cost": 0.5, "purpose": 0.3},
+    "hard_constraints": {
+      "min_early_strength": 15,
+      "max_bleeding": 2.0
+    },
+    "target_ranges": {
+      "fck_min": 30,
+      "fck_max": 50,
+      "scm_min": 0.1,
+      "scm_max": 0.3
+    }
+  },
+  "RPC/HPC": {
+    "description": "High-Performance Concrete with silica fume, very low w/b ratios, and high strength (>M60).",
+    "wb_limit": 0.35,
+    "scm_limit": 0.25,
+    "min_binder": 450,
+    "weights": {"co2": 0.4, "cost": 0.1, "purpose": 0.5},
+    "hard_constraints": {
+      "min_strength": 60,
+      "max_wb": 0.35,
+      "min_silica_fume": 0.05
+    },
+    "target_ranges": {
+      "fck_min": 60,
+      "fck_max": 100,
+      "scm_min": 0.05,
+      "scm_max": 0.25
+    }
+  },
+  "Foundation": {
+    "description": "Mass concrete element focusing on durability, low heat generation, and cost.",
+    "wb_limit": 0.50,
+    "scm_limit": 0.5,
+    "min_binder": 320,
+    "weights": {"co2": 0.4, "cost": 0.4, "purpose": 0.2},
+    "hard_constraints": {
+      "max_heat_generation": 35,
+      "min_durability_index": 0.8
+    },
+    "target_ranges": {
+      "fck_min": 20,
+      "fck_max": 35,
+      "scm_min": 0.25,
+      "scm_max": 0.5
+    }
   }
 }
