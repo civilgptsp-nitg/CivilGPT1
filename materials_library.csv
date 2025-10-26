@@ -1,13 +1,29 @@
-Material,Description,UnitCost(INR_per_kg),Density(kg_per_m3)
-OPC 33,Ordinary Portland Cement 33 Grade,6.0,3150
-OPC 43,Ordinary Portland Cement 43 Grade,6.2,3150
-OPC 53,Ordinary Portland Cement 53 Grade,6.5,3150
-PPC,Portland Pozzolana Cement,5.8,3100
-Fly Ash,Class F Fly Ash,1.5,2200
-GGBS,Ground Granulated Blast Furnace Slag,2.0,2900
-Silica Fume,Condensed Silica Fume (Micro Silica),28.0,2200
-Metakaolin,Calcined Kaolin (Metakaolin),22.0,2500
-Water,Potable Water,0.0,1000
-PCE Superplasticizer,Polycarboxylate Ether SP,45.0,1100
-M-Sand,Manufactured Sand,0.8,2650
-20mm Coarse Aggregate,Crushed Stone 20mm,0.7,2700
+Material,Description,UnitCost(INR_per_kg),Density(kg_per_m3),SpecificGravity,MoistureContent,WaterAbsorption,CO2_Factor(kg_CO2_per_kg)
+OPC 33,Ordinary Portland Cement 33 Grade,6.0,3150,3.15,0.0,0.0,0.93
+OPC 43,Ordinary Portland Cement 43 Grade,6.2,3150,3.15,0.0,0.0,0.93
+OPC 53,Ordinary Portland Cement 53 Grade,6.5,3150,3.15,0.0,0.0,0.93
+PPC,Portland Pozzolana Cement,5.8,3100,3.10,0.0,0.0,0.78
+Fly Ash,Class F Fly Ash,1.5,2200,2.20,0.0,0.0,0.02
+GGBS,Ground Granulated Blast Furnace Slag,2.0,2900,2.90,0.0,0.0,0.08
+Silica Fume,Condensed Silica Fume (Micro Silica),28.0,2200,2.20,0.0,0.0,0.10
+Metakaolin,Calcined Kaolin (Metakaolin),22.0,2500,2.50,0.0,0.0,0.15
+Water,Potable Water,0.0,1000,1.00,0.0,0.0,0.0
+PCE Superplasticizer,Polycarboxylate Ether SP,45.0,1100,1.10,0.0,0.0,2.5
+M-Sand,Manufactured Sand,0.8,2650,2.65,1.5,1.0,0.008
+10mm Coarse Aggregate,Crushed Stone 10mm,0.8,2700,2.70,0.5,0.8,0.008
+12.5mm Coarse Aggregate,Crushed Stone 12.5mm,0.75,2700,2.70,0.5,0.8,0.008
+20mm Coarse Aggregate,Crushed Stone 20mm,0.7,2700,2.70,0.5,0.8,0.008
+40mm Coarse Aggregate,Crushed Stone 40mm,0.65,2700,2.70,0.5,0.8,0.008
+River Sand,Natural River Sand,0.9,2650,2.65,2.0,1.2,0.005
+Crushed Sand,Crushed Stone Sand,0.85,2650,2.65,1.2,1.5,0.008
+Lightweight Aggregate,Expanded Clay Aggregate,3.5,850,0.85,5.0,15.0,0.15
+Steel Fibers,Hooked End Steel Fibers,65.0,7850,7.85,0.0,0.0,2.8
+Polypropylene Fibers,Monofilament Polypropylene Fibers,120.0,910,0.91,0.0,0.0,3.2
+VMA,Viscosity Modifying Admixture,85.0,1050,1.05,0.0,0.0,1.8
+Retarder,Set Retarding Admixture,38.0,1150,1.15,0.0,0.0,1.2
+Accelerator,Set Accelerating Admixture,42.0,1200,1.20,0.0,0.0,1.5
+Air Entraining Agent,Air Entraining Admixture,55.0,1020,1.02,0.0,0.0,1.0
+Shrinkage Reducing Admixture,Shrinkage Reducer,68.0,1080,1.08,0.0,0.0,2.2
+Microsphere Filler,Inert Microsphere Filler,12.0,1800,1.80,0.0,0.0,0.05
+Rice Husk Ash,Agricultural RHA Pozzolan,3.5,2200,2.20,1.0,5.0,0.04
+Limestone Powder,Calcium Carbonate Filler,2.5,2700,2.70,0.2,0.5,0.02
