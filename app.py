@@ -1,3 +1,86 @@
+[file name]: CivilGPT_Feature_Pseudocode.pdf
+[file content begin]
+===== Page 1 =====
+
+# CivilGPT - Feature Implementation Pseudocode
+
+CivilGPT - Feature Implementation Pseudocode New Features: 1. Expanded Concrete Grade Range 2. High Performance Concrete (HPC) Support 3. Purpose-Based Mix Optimization (pavement, beam, slab, column, etc.) Prepared for: Developer & Team Reference
+
+1. Overview - Goal: Extend CivilGPT to support more concrete grades, include High-Performance Concrete (HPC) options, and accept a 'purpose' input (pavement, beam, slab, column, foundation, precast, etc.) so the optimizer can apply purpose-specific constraints and objective adjustments. - Maintain IS-code compliance (IS 10262 & IS 456) while adding configurable purpose-specific constraints and optional HPC workflows (higher strengths, reduced w/b, silica fume, etc.).
+
+2. High-level Data Structures - PURPOSE_PROFILE: dict mapping purpose -> profile (constraints & objective weights) e.g., { "slab": {"target_serviceability": "deflection_limit", "min_modulus": None, "traffic_loading": None, "preferred_wb_max": 0.50, "durability_emphasis": 0.3, "strength_emphasis": 0.2, "cost_emphasis": 0.5}, "pavement": {"fatigue_factor": X, "min_cbr_adj": Y, "durability_emphasis": 0.6, "strength_emphasis": 0.2, "cost_emphasis": 0.2}, "beam": {...}, "column": {...}, "precast": {...} } - HPC_OPTIONS: dict of HPC-specific materials and typical dosages e.g., {"silica Fume": {"max_frac":0.10, "co2_factor":..., "cost_factor":...}, ...} - GRADE_EXTENSIONS: extended mapping of grades -> properties (allowing > M50 if needed) - PURPOSE_METRICS: records to store purpose-evaluation outputs (e.g., modulus, shrinkage risk, fatigue life estimate)
+
+3. UI Changes (Streamlit) - Add "Purpose" selectbox in sidebar with choices: ["General", "Pavement", "Slab", "Beam", "Column", "Foundation", "Precast", "RPC/HPC"] - Add "Enable HPC" toggle (only active if purpose supports or user chooses) and selectable HPC options (Silica Fume, Very Low w/b presets) - Add "Target Performance" optional inputs (e.g., target flexural strength for pavement, max deflection for slab) - Add "Advanced constraints" expander containing per-purpose knobs (emphasis weights, durability vs cost) - Expose new calibration parameters for HPC (e.g., silica fume density, water demand multiplier, SP sensitivity)
+
+4. Backend: New or Modified Helpers - function: load_purpose_profiles(filepath=None): - if file provided, load purpose-specific profiles from CSV/JSON else use built-in defaults - validate fields and fall back to safe defaults if missing - function: adjust_water_for_HPC(base_water, hpc_options, sp_effectiveness): - apply additional water demand multipliers for HPC admixtures (e.g., silica fume increases water demand) - account for SP effectiveness (PCE) and recommend higher SP dosages if silica fume present - function: compute_purpose_penalty(meta, purpose_profile): - Evaluate key purpose-related penalties: - durability_penalty = f(max_wb_exceedance, min_cement_requirement, exposure) - structural_penalty = f(target_strength_miss, modulus_shortfall, fatigue_estimate) - constructability_penalty = f(placement_difficulty, pumpability issues) - Return composite penalty (to be added to objective)
+
+===== Page 2 =====
+
+- function: evaluate_purpose_specific_metrics(mix_meta, purpose): - Compute approximate metrics
+needed for purpose evaluation, e.g.: - Est. Young's Modulus E = alpha *
+sqrt(mean_strength)
+(empirical) - Shrinkage risk index = function of cementitious content and water content
+- Fatigue life proxy for pavements = function of w/b and binder composition - Return
+purpose_metrics
+dict
+
+5. Optimization: Integrate Purpose into Objective - Existing objectives: minimize CO2 OR minimize Cost
+subject to feasibility - New objective formulation (composite): - objective = w_co2 *
+norm(CO2) +
+w_cost * norm(Cost) + w_purpose * norm(PurposePenalty) - w_* are weights chosen from PURPOSE_PROFILE or UI sliders - Algorithm changes in generate_mix: - Accept new params: purpose,
+purpose_profile,
+hpc_options, purpose_weights - During candidate evaluation: - compute mix as before (binder,
+aggregates, moisture correction) - call evaluate_mix() to get CO2 and cost - call evaluate_purpose_specific_metrics() -> purpose_metrics - call compute_purpose_penalty(meta,
+purpose_profile) -> purpose_penalty - compute composite_score = weighted sum as above (or use multi-objective ranking) - Decide feasibility: mix must pass IS-code checks AND
+purpose-specific hard constraints (e.g., minimum modulus if specified) - Add candidate to trace with additional fields:
+purpose_penalty, purpose_metrics, composite_score
+
+6. HPC Support - When user enables HPC: - Expand SCM search space to include Silica Fume (SP) and higher GGBS limit if desired - Apply special constraints: - Min binder strength increased for HPC grades - Allow w/b ratios to go lower (e.g., 0.25 - 0.40) but ensure SP is available and SP dosage bounds are widened - Apply silica fume water demand multiplier and increase SP recommendation - Validate mix for pumpability: ensure fines content and SP within acceptable range
+- Add pre-check: does the local materials library include silica fume CO2 and cost? If not, warn user and use placeholders
+
+7. Purpose Profiles: Example Defaults - Pavement: - durability_emphasis: 0.6,
+strength_emphasis: 0.2, cost_emphasis: 0.2 - hard constraints: min_flexural_strength (if provided),
+fatigue_proxy_min,
+max_wb_for_frost - Slab: - durability_emphasis: 0.2, strength_emphasis: 0.3,
+cost_emphasis: 0.5
+- hard constraints: max_deflection_proxy, min_modulus (if target supplied) - Beam/Column: -
+durability_emphasis: 0.3, strength_emphasis: 0.4, cost_emphasis: 0.3 - hard constraints: min_compressive_strength (as usual), max_shrinkage_risk
+
+8. Data Validation & Reporting - Extend trace CSV and reports to include purpose,
+purpose_metrics,
+purpose_penalty, hpc_flags, hpc_components - Update PDF generator to include a "Purpose Analysis" section with metrics and explanation of penalties, trade-offs, and recommended mix tweaks for the chosen purpose
+
+9. Backwards Compatibility - If purpose == "General" or None: behave exactly as before (legacy mode) -
+If "Enable HPC" is false, restrict new HPC materials from being used - Ensure all old API calls and CLI behaviors remain unchanged unless explicit new flags are set
+
+10. Unit Tests & Validation Cases (essential) - Test 1: Existing baseline behavior unchanged for default
+
+===== Page 3 =====
+
+(General) purpose - Test 2: Pavement purpose: verify mixes produced have higher durability emphasis and pass fatigue proxy checks - Test 3: Beam purpose: verify strength-emphasis increases binder or lowers w/b where possible - Test 4: HPC workflow: silica fume mixes generate higher SP and adjusted water; check feasibility & warnings - Test 5: Missing material data: placeholder fallback and clear user warnings (do not crash) - Test 6: Pareto front: verify multi-objective ranking includes purpose_penalty and slider compromises still work
+
+11. Integration Pseudocode (detailed) - generate_mix (new signature) function generate_mix(..., purpose='General', purpose_profile=None, enable_hpc=False, hpc_options=None, purpose_weights=None, **kwargs): - load purpose_profile = load_purpose_profiles() if None - weights = purpose_profile.get('weights') or purpose_weights or defaults - set search ranges for wb, flyash, ggbs as before - if enable_hpc: - include silica_fume_range in scm search space - increase allowable sp upper limit and adjust water multipliers - for each wb in wb_values: for each flyash_frac in flyash_options: for each ggbs_frac in ggbs_options: for each sf_frac in silica_fume_options (if HPC enabled) OR sf_frac=0: if flyash + ggbs + sf > 0.5 (or purpose_profile.max_scm) -> continue compute binder, cement, sp as before (adjust for sf water demand) compute aggregates using get_coarse_agg_fraction(...) (unchanged) apply moisture corrections compute water_final mix = {...} # materials and quantities df = evaluate_mix(mix, emissions_df, costs_df) co2_total, cost_total = sum(df.CO2...), sum(df.Cost...) # Purpose-specific metrics purpose_metrics = evaluate_purpose_specific_metrics(candidate_meta, purpose) purpose_penalty = compute_purpose_penalty(candidate_meta, purpose_profile) # Composite objective (normalize inside loop or on-the-fly) composite_score = weights['co2']*norm(co2_total) + weights['cost']*norm(cost_total) + weights['purpose']*norm(purpose_penalty) feasible = check_feasibility(df, candidate_meta, exposure) AND pass purpose hard constraints append to trace with additional fields: purpose, sf_frac, purpose_penalty, purpose_metrics, composite_score, feasible if feasible and composite_score < best_score: update best_df, best_meta, best_score return best_df, best_meta, trace
+
+12. Notes on Normalization and Scaling - Normalization: to combine CO2, cost, and penalty, maintain running min/max in the search loop or pre-compute approximations; otherwise compute norms on collected trace after generation (two-stage selection): - Stage 1: enumerate feasible mixes, collect raw metrics - Stage 2: normalize metrics across feasible mixes and compute composite scores for ranking - Use Pareto-front selection as alternate multi-objective strategy; allow user to pick compromise on Pareto with purpose_penalty included
+
+13. UX & Help Text Additions - Add concise help tooltips explaining purpose profiles and HPC trade-offs - Add warnings when HPC requested but local library misses key entries (silica fume CO2/cost) - Provide recommended SP dosage and placement notes for HPC mixes in PDF report
+
+14. Deployment & Config - Add new environment flags for max HPC usage (safety) - Add sample purpose_profiles.json in repo and docs - Update CI tests to include new unit tests and integration checks
+
+15. Example Purpose-Specific Rule: Pavement fatigue proxy - fatigue_proxy = function(w_b, binder, aggregate_quality, traffic_category) - require fatigue_proxy >= threshold_for_traffic_category
+
+===== Page 4 =====
+
+16. Example Minimal Implementation Timeline (suggested) - Week 1: UI changes, data structures, default
+purpose profiles - Week 2: Backend metrics functions, purpose penalty functions, unit tests - Week 3:
+HPC support (silica fume), SP adjustments, validations - Week 4: Pareto integration, reports update,
+polish and judge-readiness
+
+End of pseudocode
+
+
+[file content end]
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -758,20 +841,45 @@ def _merge_and_warn(main_df: pd.DataFrame, factor_df: pd.DataFrame, factor_col: 
         main_df[factor_col] = 0.0
         return main_df
 
-def pareto_front(df, x_col="cost", y_col="co2"):
+def pareto_front(df, x_col="cost", y_col="co2", z_col="purpose_penalty"):
+    """Enhanced Pareto front calculation with three objectives: cost, CO2, and purpose_penalty"""
     if df.empty:
         return pd.DataFrame(columns=df.columns)
-    sorted_df = df.sort_values(by=[x_col, y_col], ascending=[True, True])
+    
+    # Sort by cost first (primary objective)
+    sorted_df = df.sort_values(by=[x_col, y_col, z_col], ascending=[True, True, True])
     pareto_points = []
-    last_y = float('inf')
+    
     for _, row in sorted_df.iterrows():
-        if row[y_col] < last_y:
+        # Check if this point is dominated by any existing Pareto point
+        dominated = False
+        for pareto_point in pareto_points:
+            if (pareto_point[x_col] <= row[x_col] and 
+                pareto_point[y_col] <= row[y_col] and 
+                pareto_point[z_col] <= row[z_col] and
+                (pareto_point[x_col] < row[x_col] or 
+                 pareto_point[y_col] < row[y_col] or 
+                 pareto_point[z_col] < row[z_col])):
+                dominated = True
+                break
+                
+        if not dominated:
+            # Remove any points that are dominated by the new point
+            pareto_points = [p for p in pareto_points if not (
+                row[x_col] <= p[x_col] and 
+                row[y_col] <= p[y_col] and 
+                row[z_col] <= p[z_col] and
+                (row[x_col] < p[x_col] or 
+                 row[y_col] < p[y_col] or 
+                 row[z_col] < p[z_col])
+            )]
             pareto_points.append(row)
-            last_y = row[y_col]
-    if not pareto_points: return pd.DataFrame(columns=df.columns)
+    
+    if not pareto_points:
+        return pd.DataFrame(columns=df.columns)
+    
     return pd.DataFrame(pareto_points).reset_index(drop=True)
 
-@st.cache_data
 def water_for_slump_and_shape(nom_max_mm: int, slump_mm: int, agg_shape: str, uses_sp: bool=False, sp_reduction_frac: float=0.0) -> float:
     base = CONSTANTS.WATER_BASELINE.get(int(nom_max_mm), 186.0)
     water = base if slump_mm <= 50 else base * (1 + 0.03 * ((slump_mm - 50) / 25.0))
@@ -1460,20 +1568,29 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
         trace_df = grid_df.rename(columns={"w_b": "wb", "cost_total": "cost", "co2_total": "co2"})
         return None, None, trace_df.to_dict('records')
 
-    # --- 8. Optimization & Selection ---
+    # --- 8. TWO-STAGE OPTIMIZATION & SELECTION ---
+    # Stage 1: Collect raw metrics from feasible mixes
+    feasible_candidates_df = feasible_candidates_df.copy()
+    
+    # Stage 2: Normalize metrics and compute composite scores for ranking
     if not enable_purpose_optimization or purpose == 'General':
+        # Single-objective optimization (legacy behavior)
         objective_col = 'cost_total' if optimize_cost else 'co2_total'
         feasible_candidates_df['composite_score'] = np.nan # Not used
         best_idx = feasible_candidates_df[objective_col].idxmin()
     else:
+        # Multi-objective optimization with purpose penalty
+        # Normalize all three objectives
         feasible_candidates_df['norm_co2'] = _minmax_scale(feasible_candidates_df['co2_total'])
         feasible_candidates_df['norm_cost'] = _minmax_scale(feasible_candidates_df['cost_total'])
         feasible_candidates_df['norm_purpose'] = _minmax_scale(feasible_candidates_df['purpose_penalty'])
         
-        w_co2 = purpose_weights.get('w_co2', 0.4)
-        w_cost = purpose_weights.get('w_cost', 0.4)
-        w_purpose = purpose_weights.get('w_purpose', 0.2)
+        # Apply weights from purpose profile
+        w_co2 = purpose_weights.get('co2', 0.4)
+        w_cost = purpose_weights.get('cost', 0.4)
+        w_purpose = purpose_weights.get('purpose', 0.2)
         
+        # Calculate composite score (lower is better)
         feasible_candidates_df['composite_score'] = (
             w_co2 * feasible_candidates_df['norm_co2'] +
             w_cost * feasible_candidates_df['norm_cost'] +
@@ -2100,10 +2217,10 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                 total_w = w_co2 + w_cost + w_purpose
                 if total_w == 0:
                     st.warning("Weights cannot all be zero. Defaulting to balanced weights.")
-                    purpose_weights = {"w_co2": 0.33, "w_cost": 0.33, "w_purpose": 0.34}
+                    purpose_weights = {"co2": 0.33, "cost": 0.33, "purpose": 0.34}
                 else:
-                    purpose_weights = {"w_co2": w_co2 / total_w, "w_cost": w_cost / total_w, "w_purpose": w_purpose / total_w}
-                    st.caption(f"Normalized: CO₂ {purpose_weights['w_co2']:.1%}, Cost {purpose_weights['w_cost']:.1%}, Purpose {purpose_weights['w_purpose']:.1%}")
+                    purpose_weights = {"co2": w_co2 / total_w, "cost": w_cost / total_w, "purpose": w_purpose / total_w}
+                    st.caption(f"Normalized: CO₂ {purpose_weights['co2']:.1%}, Cost {purpose_weights['cost']:.1%}, Purpose {purpose_weights['purpose']:.1%}")
         elif enable_purpose_optimization and purpose == 'General':
              st.info("Purpose 'General' uses single-objective optimization (CO₂ or Cost).")
              enable_purpose_optimization = False
@@ -2227,7 +2344,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
         
         total_w = w_co2 + w_cost + w_purpose
         if total_w > 0:
-            purpose_weights = {"w_co2": w_co2 / total_w, "w_cost": w_cost / total_w, "w_purpose": w_purpose / total_w}
+            purpose_weights = {"co2": w_co2 / total_w, "cost": w_cost / total_w, "purpose": w_purpose / total_w}
 
     if 'user_text_input' not in st.session_state: st.session_state.user_text_input = ""
     if 'clarification_needed' not in st.session_state: st.session_state.clarification_needed = False
@@ -2425,7 +2542,8 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                 feasible_mixes = trace_df[trace_df['feasible']].copy()
 
                 if not feasible_mixes.empty:
-                    pareto_df = pareto_front(feasible_mixes, x_col="cost", y_col="co2")
+                    # ENHANCED PARETO FRONT WITH PURPOSE_PENALTY
+                    pareto_df = pareto_front(feasible_mixes, x_col="cost", y_col="co2", z_col="purpose_penalty")
                     
                     # Ensure safe default for slider
                     current_alpha = st.session_state.get("pareto_slider_alpha", 0.5)
@@ -2437,25 +2555,50 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                             help="Slide towards Sustainability to prioritize low CO₂, or towards Cost to prioritize low price. The green diamond will show the best compromise on the Pareto Front for your chosen preference.",
                             key="pareto_slider_alpha"
                         )
+                        
+                        # Normalize all three objectives for composite scoring
+                        cost_min, cost_max = pareto_df['cost'].min(), pareto_df['cost'].max()
+                        co2_min, co2_max = pareto_df['co2'].min(), pareto_df['co2'].max()
+                        penalty_min, penalty_max = pareto_df['purpose_penalty'].min(), pareto_df['purpose_penalty'].max()
+                        
                         pareto_df_norm = pareto_df.copy()
-                        cost_min, cost_max = pareto_df_norm['cost'].min(), pareto_df_norm['cost'].max()
-                        co2_min, co2_max = pareto_df_norm['co2'].min(), pareto_df_norm['co2'].max()
                         pareto_df_norm['norm_cost'] = 0.0 if (cost_max - cost_min) == 0 else (pareto_df_norm['cost'] - cost_min) / (cost_max - cost_min)
                         pareto_df_norm['norm_co2'] = 0.0 if (co2_max - co2_min) == 0 else (pareto_df_norm['co2'] - co2_min) / (co2_max - co2_min)
-                        pareto_df_norm['score'] = alpha * pareto_df_norm['norm_co2'] + (1 - alpha) * pareto_df_norm['norm_cost']
+                        pareto_df_norm['norm_penalty'] = 0.0 if (penalty_max - penalty_min) == 0 else (pareto_df_norm['purpose_penalty'] - penalty_min) / (penalty_max - penalty_min)
+                        
+                        # Calculate composite score with purpose penalty included
+                        pareto_df_norm['score'] = (
+                            alpha * pareto_df_norm['norm_co2'] + 
+                            (1 - alpha) * pareto_df_norm['norm_cost'] +
+                            pareto_df_norm['norm_penalty'] * 0.2  # Fixed weight for purpose penalty
+                        )
                         best_compromise_mix = pareto_df_norm.loc[pareto_df_norm['score'].idxmin()]
 
                         fig, ax = plt.subplots(figsize=(10, 6))
-                        ax.scatter(feasible_mixes["cost"], feasible_mixes["co2"], color='grey', alpha=0.5, label='All Feasible Mixes', zorder=1)
+                        ax.scatter(feasible_mixes["cost"], feasible_mixes["co2"], 
+                                  c=feasible_mixes["purpose_penalty"], cmap='viridis', 
+                                  alpha=0.5, label='All Feasible Mixes', zorder=1)
+                        
+                        # Colorbar for purpose penalty
+                        cbar = plt.colorbar(ax.collections[0], ax=ax)
+                        cbar.set_label('Purpose Penalty')
+                        
                         pareto_df_sorted = pareto_df.sort_values(by="cost")
-                        ax.plot(pareto_df_sorted["cost"], pareto_df_sorted["co2"], '-o', color='blue', label='Pareto Front (Efficient Mixes)', linewidth=2, zorder=2)
+                        ax.plot(pareto_df_sorted["cost"], pareto_df_sorted["co2"], '-o', 
+                               color='blue', label='Pareto Front (Efficient Mixes)', 
+                               linewidth=2, zorder=2)
                         
                         optimize_for_label = f"Composite Score ({inputs['purpose']})" if inputs.get('enable_purpose_optimization', False) and inputs.get('purpose', 'General') != 'General' else inputs.get('optimize_for', 'CO₂ Emissions')
                         
-                        ax.plot(opt_meta['cost_total'], opt_meta['co2_total'], '*', markersize=15, color='red', label=f'Chosen Mix ({optimize_for_label})', zorder=3)
-                        ax.plot(best_compromise_mix['cost'], best_compromise_mix['co2'], 'D', markersize=10, color='green', label='Best Compromise (from slider)', zorder=3)
+                        ax.plot(opt_meta['cost_total'], opt_meta['co2_total'], '*', 
+                               markersize=15, color='red', 
+                               label=f'Chosen Mix ({optimize_for_label})', zorder=3)
+                        ax.plot(best_compromise_mix['cost'], best_compromise_mix['co2'], 'D', 
+                               markersize=10, color='green', 
+                               label='Best Compromise (from slider)', zorder=3)
                         ax.set_xlabel("Material Cost (₹/m³)"); ax.set_ylabel("Embodied Carbon (kg CO₂e / m³)")
-                        ax.set_title("Pareto Front of Feasible Concrete Mixes"); ax.grid(True, linestyle='--', alpha=0.6); ax.legend()
+                        ax.set_title("Pareto Front of Feasible Concrete Mixes (Color = Purpose Penalty)"); 
+                        ax.grid(True, linestyle='--', alpha=0.6); ax.legend()
                         st.pyplot(fig)
 
                         st.markdown("---")
@@ -2471,9 +2614,10 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                         ].iloc[0]
 
                         if 'composite_score' in full_compromise_mix and not pd.isna(full_compromise_mix['composite_score']):
-                            c4, c5 = st.columns(2)
+                            c4, c5, c6 = st.columns(3)
                             c4.metric("⚠️ Purpose Penalty", f"{full_compromise_mix['purpose_penalty']:.2f}")
                             c5.metric("🎯 Composite Score", f"{full_compromise_mix['composite_score']:.3f}")
+                            c6.metric("🛠️ Purpose", f"{full_compromise_mix.get('purpose', 'General')}")
                         
                     else:
                         st.info("No Pareto front could be determined from the feasible mixes.", icon="ℹ️")
