@@ -9,7 +9,7 @@ from io import BytesIO
 from difflib import get_close_matches
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet # CORRECTED SYNTAX
+from reportlab.lib.styles import getSampleStyleSheet 
 from reportlab.lib.units import inch
 from functools import lru_cache
 from itertools import product
@@ -1455,35 +1455,29 @@ def run_manual_interface(materials_df: pd.DataFrame, emissions_df: pd.DataFrame,
                 calib_max_ggbs_frac = st.slider("Max GGBS fraction", 0.0, 0.5, st.session_state.calib_max_ggbs_frac, 0.05, key="calib_max_ggbs_frac", help="Maximum GGBS replacement percentage to test.")
                 calib_scm_step = st.slider("SCM fraction step (scm_step)", 0.05, 0.25, st.session_state.calib_scm_step, 0.05, key="calib_scm_step", help="Step size for testing different SCM replacement percentages.")
                 
-                # START FIX: Corrected Silica Fume Slider Logic (Inherited from previous fix)
-                
-                # 1. Define the range limit based on the HPC toggle.
-                max_sf_range = 0.15 if enable_hpc else 0.0
-                
-                # 2. Safely retrieve session state value. Default to 0.0 if not set.
-                default_session_value = st.session_state.get("calib_max_silica_fume_frac", 0.0)
+# --- FIXED SILICA FUME SLIDER ---
+                if enable_hpc:
+                    max_sf_range = 0.15
+                    slider_min, slider_max = 0.0, max_sf_range
+                    default_session_value = st.session_state.get("calib_max_silica_fume_frac", 0.05)
+                    slider_value = min(default_session_value, max_sf_range)
+                else:
+                    max_sf_range = 0.0 # Define max_sf_range for help text when HPC is disabled
+                    slider_min, slider_max, slider_value = 0.0, 0.0, 0.0
 
-                # 3. Ensure the initial value is always <= the max_sf_range to prevent StreamlitAPIException.
-                slider_value = min(default_session_value, max_sf_range)
-
-                # 4. Render the slider with the constrained values.
                 calib_max_silica_fume_frac = st.slider(
-                    "Max Silica Fume fraction (HPC only)",  
-                    0.0, max_sf_range,  
-                    slider_value, # Pass the capped value
-                    0.01,  
-                    key="calib_max_silica_fume_frac",  
+                    "Max Silica Fume fraction (HPC only)",
+                    slider_min, slider_max,
+                    slider_value,
+                    0.01,
+                    key="calib_max_silica_fume_frac",
                     disabled=not enable_hpc,
                     help=f"Max Silica Fume replacement. Limited to {max_sf_range*100:.0f}% when HPC is {'Enabled' if enable_hpc else 'Disabled'}."
                 )
-
-                # 5. Final safety: If HPC is disabled, the effective fraction must be 0.0 for the optimization logic.
                 if not enable_hpc:
-                    # Explicitly set the session state to 0.0 if HPC is off, keeping the UI consistent
                     st.session_state["calib_max_silica_fume_frac"] = 0.0
-                    calib_max_silica_fume_frac = 0.0 
-
-                # END FIX
+                    calib_max_silica_fume_frac = 0.0
+# --- END FIX
 
     # --- 3. INPUT GATHERING ---
     inputs = {
