@@ -2029,38 +2029,32 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
         base_df, base_meta = results["base_df"], results["base_meta"]
         trace, inputs = results["trace"], results["inputs"]
         
-        # --- FIX: Tab Controller Fix ---
+        # --- FIXED TAB NAVIGATION ---
         TAB_NAMES = [
             "📊 **Overview**", "🌱 **Optimized Mix**", "🏗️ **Baseline Mix**",
             "⚖️ **Trade-off Explorer**", "📋 **QA/QC & Gradation**",
             "📥 **Downloads & Reports**", "🔬 **Lab Calibration**"
         ]
         
-        # Ensure session state active tab is valid, else default
-        # The switch_to_manual_mode callback sets 'active_tab_name' and 'manual_tabs'
-        if st.session_state.active_tab_name not in TAB_NAMES:
-            st.session_state.active_tab_name = TAB_NAMES[0]
-
-        # Get the index for the radio button
-        try:
-            default_index = TAB_NAMES.index(st.session_state.active_tab_name)
-        except ValueError:
-            default_index = 0
-            st.session_state.active_tab_name = TAB_NAMES[0]
-
-        # Use st.radio for navigation control
-        selected_tab = st.radio(
-            "Mix Report Navigation",
-            options=TAB_NAMES,
-            index=default_index,
-            horizontal=True,
-            label_visibility="collapsed",
-            key="manual_tabs"
-        )
+        # Initialize tab state if not exists
+        if "current_tab" not in st.session_state:
+            st.session_state.current_tab = TAB_NAMES[0]
         
-        # Update the session state variable for next time
-        st.session_state.active_tab_name = selected_tab
-        # --- END FIX ---
+        # Create tab navigation using buttons
+        st.markdown("---")
+        st.subheader("Mix Report Navigation")
+        
+        # Create a row of buttons for tab navigation
+        cols = st.columns(len(TAB_NAMES))
+        for i, tab_name in enumerate(TAB_NAMES):
+            with cols[i]:
+                is_selected = st.session_state.current_tab == tab_name
+                button_type = "primary" if is_selected else "secondary"
+                if st.button(tab_name, use_container_width=True, type=button_type, key=f"tab_btn_{i}"):
+                    st.session_state.current_tab = tab_name
+                    st.rerun()
+        
+        selected_tab = st.session_state.current_tab
 
         if selected_tab == "📊 **Overview**":
             co2_opt, cost_opt = opt_meta["co2_total"], opt_meta["cost_total"]
@@ -2405,8 +2399,8 @@ def main():
     if "chat_mode" not in st.session_state:
         st.session_state.chat_mode = False
     
-    if "active_tab_name" not in st.session_state:
-        st.session_state.active_tab_name = "📊 **Overview**"
+    if "current_tab" not in st.session_state:
+        st.session_state.current_tab = "📊 **Overview**"
         
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
@@ -2416,9 +2410,6 @@ def main():
         st.session_state.chat_results_displayed = False
     if "run_chat_generation" not in st.session_state:
         st.session_state.run_chat_generation = False
-    # Ensure manual_tabs key is initialized for the manual report UI element
-    if "manual_tabs" not in st.session_state:
-        st.session_state.manual_tabs = "📊 **Overview**"
         
     purpose_profiles_data = load_purpose_profiles()
 
