@@ -46,10 +46,10 @@ class CONSTANTS:
         40: {"Zone I": 0.71, "Zone II": 0.69, "Zone III": 0.67, "Zone IV": 0.65}
     }
     FINE_AGG_ZONE_LIMITS = {
-         "Zone I":   {"10.0": (100,100),"4.75": (90,100),"2.36": (60,95),"1.18": (30,70),"0.600": (15,34),"0.300": (5,20),"0.150": (0,10)},
-         "Zone II":  {"10.0": (100,100),"4.75": (90,100),"2.36": (75,100),"1.18": (55,90),"0.600": (35,59),"0.300": (8,30),"0.150": (0,10)},
-         "Zone III": {"10.0": (100,100),"4.75": (90,100),"2.36": (85,100),"1.18": (75,90),"0.600": (60,79),"0.300": (12,40),"0.150": (0,10)},
-         "Zone IV":  {"10.0": (95,100),"4.75": (95,100),"2.36": (95,100),"1.18": (90,100),"0.600": (80,100),"0.300": (15,50),"0.150": (0,15)},
+           "Zone I":   {"10.0": (100,100),"4.75": (90,100),"2.36": (60,95),"1.18": (30,70),"0.600": (15,34),"0.300": (5,20),"0.150": (0,10)},
+           "Zone II":  {"10.0": (100,100),"4.75": (90,100),"2.36": (75,100),"1.18": (55,90),"0.600": (35,59),"0.300": (8,30),"0.150": (0,10)},
+           "Zone III": {"10.0": (100,100),"4.75": (90,100),"2.36": (85,100),"1.18": (75,90),"0.600": (60,79),"0.300": (12,40),"0.150": (0,10)},
+           "Zone IV":  {"10.0": (95,100),"4.75": (95,100),"2.36": (95,100),"1.18": (90,100),"0.600": (80,100),"0.300": (15,50),"0.150": (0,15)},
     }
     COARSE_LIMITS = {
         10: {"20.0": (100,100), "10.0": (85,100), "4.75": (0,20)},
@@ -79,6 +79,7 @@ class CONSTANTS:
     NORM_CEMENT = "cement"
     NORM_FLYASH = "fly ash"
     NORM_GGBS = "ggbs"
+    NORM_SILICA_FUME = "silica fume" # Added for HPC
     NORM_WATER = "water"
     NORM_SP = "pce superplasticizer"
     NORM_FINE_AGG = "fine aggregate"
@@ -156,7 +157,8 @@ def _normalize_material_value(s: str) -> str:
         "20mm": CONSTANTS.NORM_COARSE_AGG, "pce superplasticizer": CONSTANTS.NORM_SP,
         "pce superplasticiser": CONSTANTS.NORM_SP, "pce": CONSTANTS.NORM_SP,
         "opc 33": "opc 33", "opc 43": "opc 43", "opc 53": "opc 53", "ppc": "ppc",
-        "fly ash": CONSTANTS.NORM_FLYASH, "ggbs": CONSTANTS.NORM_GGBS, "water": CONSTANTS.NORM_WATER,
+        "fly ash": CONSTANTS.NORM_FLYASH, "ggbs": CONSTANTS.NORM_GGBS, "silica fume": CONSTANTS.NORM_SILICA_FUME, # Added Silica Fume
+        "water": CONSTANTS.NORM_WATER,
     }
     if s in synonyms: return synonyms[s]
     cand = get_close_matches(s, list(synonyms.keys()), n=1, cutoff=0.78)
@@ -219,7 +221,7 @@ def load_data(materials_file=None, emissions_file=None, cost_file=None):
         
         if "Material" in df.columns:
             df["Material"] = df["Material"].astype(str).str.strip()
-        
+            
         return df
 
     materials = _safe_read(materials_file, ["materials_library.csv", "data/materials_library.csv"], CONSTANTS.MATERIALS_COL_MAP)
@@ -280,7 +282,14 @@ def water_for_slump_and_shape(nom_max_mm: int, slump_mm: int, agg_shape: str, us
     if uses_sp and sp_reduction_frac > 0: water *= (1 - sp_reduction_frac)
     return float(water)
 
-def reasonable_binder_range(grade: str):
+def reasonable_binder_range(grade: str, enable_hpc: bool = False):
+    """
+    Returns the min/max binder content (kg/m³) for a given grade.
+    HPC: Higher range (400-600 kg/m³ overrides the grade-based range).
+    """
+    if enable_hpc:
+        # HPC requirement: cementitious content: 400–600 kg/m³
+        return (400, 600)
     return CONSTANTS.BINDER_RANGES.get(grade, (300, 500))
 
 @st.cache_data
@@ -460,6 +469,7 @@ def aggregate_correction_vectorized(delta_moisture_pct: float, agg_mass_ssd_seri
 
 def compute_aggregates_vectorized(binder_series, water_scalar, sp_series, coarse_agg_frac_series, nom_max_mm, density_fa, density_ca):
     """Vectorized version of compute_aggregates."""
+    # Assuming all cementitious materials have an average SG of 3150 kg/m³ for volume calculation
     vol_cem = binder_series / 3150.0
     vol_wat = water_scalar / 1000.0
     vol_sp = sp_series / 1200.0
@@ -492,15 +502,26 @@ def compute_aggregates(cementitious, water, sp, coarse_agg_fraction, nom_max_mm,
     return float(mass_fine_ssd), float(mass_coarse_ssd)
 
 
-def check_feasibility(mix_df, meta, exposure):
+def check_feasibility(mix_df, meta, exposure, enable_hpc=False):
     # Compliance Checks
     checks = {}
     try: checks["W/B ≤ exposure limit"] = float(meta["w_b"]) <= CONSTANTS.EXPOSURE_WB_LIMITS[exposure]
     except: checks["W/B ≤ exposure limit"] = False
-    try: checks["Min cementitious met"] = float(meta["cementitious"]) >= float(CONSTANTS.EXPOSURE_MIN_CEMENT[exposure])
+    
+    try: 
+        min_cem_req = float(CONSTANTS.EXPOSURE_MIN_CEMENT[exposure])
+        if enable_hpc: # HPC constraint 400 kg/m³ min
+            min_cem_req = max(min_cem_req, 400.0)
+        checks["Min cementitious met"] = float(meta["cementitious"]) >= min_cem_req
     except: checks["Min cementitious met"] = False
+    
     try: checks["SCM ≤ 50%"] = float(meta.get("scm_total_frac", 0.0)) <= 0.50
     except: checks["SCM ≤ 50%"] = False
+    
+    # Specific SCM checks
+    try: checks["Silica Fume ≤ 15%"] = float(meta.get("silica_fume_frac", 0.0)) <= 0.15
+    except: checks["Silica Fume ≤ 15%"] = True # Pass if not used
+        
     try:
         total_mass = float(mix_df["Quantity (kg/m3)"].sum())
         checks["Unit weight 2200–2600 kg/m³"] = 2200.0 <= total_mass <= 2600.0
@@ -516,6 +537,7 @@ def check_feasibility(mix_df, meta, exposure):
         "cement (kg/m³)": round(float(meta.get("cement", 0.0)), 1),
         "fly ash (kg/m³)": round(float(meta.get("flyash", 0.0)), 1),
         "GGBS (kg/m³)": round(float(meta.get("ggbs", 0.0)), 1),
+        "Silica Fume (kg/m³)": round(float(meta.get("silica_fume", 0.0)), 1), # Added Silica Fume
         "fine agg (kg/m³)": round(float(meta.get("fine", 0.0)), 1),
         "coarse agg (kg/m³)": round(float(meta.get("coarse", 0.0)), 1),
         "SP (kg/m³)": round(float(meta.get("sp", 0.0)), 2),
@@ -526,27 +548,43 @@ def check_feasibility(mix_df, meta, exposure):
     warnings = []
     try:
         cement, water, fine = derived.get("cement (kg/m³)", 0), derived.get("water target (kg/m³)", 0), derived.get("fine agg (kg/m³)", 0)
-        coarse, sp = derived.get("coarse agg (kg/m³)", 0), derived.get("SP (kg/m³)", 0)
+        coarse, sp = derived.get("coarse agg (kg/m³)", 0), derived.get("SP (kg/m³)"), derived.get("Silica Fume (kg/m³)", 0)
         unit_wt = derived.get("total mass (kg/m³)", 0)
     except Exception:
         warnings.append("Insufficient data to run all sanity checks.")
         cement, water, fine, coarse, sp, unit_wt = 0, 0, 0, 0, 0, 0
 
-    if cement > 500: warnings.append(f"High cement content ({cement:.1f} kg/m³). Increases cost, shrinkage, and CO₂.")
+    if cement > 500 and not enable_hpc: warnings.append(f"High cement content ({cement:.1f} kg/m³). Increases cost, shrinkage, and CO₂.")
+    if cement > 600 and enable_hpc: warnings.append(f"High cement content for HPC ({cement:.1f} kg/m³). Could increase shrinkage and heat of hydration.")
     if not 140 <= water <= 220: warnings.append(f"Water content ({water:.1f} kg/m³) is outside the typical range of 140-220 kg/m³.")
     if not 500 <= fine <= 900: warnings.append(f"Fine aggregate quantity ({fine:.1f} kg/m³) is unusual.")
     if not 1000 <= coarse <= 1300: warnings.append(f"Coarse aggregate quantity ({coarse:.1f} kg/m³) is unusual.")
     if sp > 20: warnings.append(f"Superplasticizer dosage ({sp:.1f} kg/m³) is unusually high.")
     
+    # Check for HPC specific feasibility failures
+    if enable_hpc:
+        if float(meta.get("w_b", 1.0)) > 0.35:
+            checks["HPC W/B ≤ 0.35"] = False
+        else:
+            checks["HPC W/B ≤ 0.35"] = True
+            
+        if derived.get("Silica Fume (kg/m³)") == 0.0:
+            warnings.append("HPC mixes typically use silica fume for enhanced packing density and strength.")
+
     reasons_fail = [f"IS Code Fail: {k}" for k, v in checks.items() if not v]
     feasible = len(reasons_fail) == 0
     
     return feasible, reasons_fail, warnings, derived, checks
 
-def get_compliance_reasons_vectorized(df: pd.DataFrame, exposure: str) -> pd.Series:
+def get_compliance_reasons_vectorized(df: pd.DataFrame, exposure: str, enable_hpc: bool) -> pd.Series:
     """Vectorized version of get_compliance_reasons for the optimization grid."""
+    
     limit_wb = CONSTANTS.EXPOSURE_WB_LIMITS[exposure]
     limit_cem = CONSTANTS.EXPOSURE_MIN_CEMENT[exposure]
+    
+    if enable_hpc:
+        limit_wb = min(limit_wb, 0.35) # HPC W/B limit
+        limit_cem = max(limit_cem, 400.0) # HPC Cementitious content limit
     
     reasons = pd.Series("", index=df.index, dtype=str)
     
@@ -562,9 +600,17 @@ def get_compliance_reasons_vectorized(df: pd.DataFrame, exposure: str) -> pd.Ser
     )
     reasons += np.where(
         df['scm_total_frac'] > 0.50,
-        "SCM fraction exceeds limit (" + (df['scm_total_frac'] * 100).round(0).astype(str) + "% > 50%); ",
+        "Total SCM fraction exceeds limit (" + (df['scm_total_frac'] * 100).round(0).astype(str) + "% > 50%); ",
         ""
     )
+    
+    if enable_hpc:
+        reasons += np.where(
+            df['silica_fume_frac'] > 0.15,
+            "Silica Fume fraction exceeds limit (" + (df['silica_fume_frac'] * 100).round(0).astype(str) + "% > 15%); ",
+            ""
+        )
+        
     reasons += np.where(
         ~((df['total_mass'] >= 2200) & (df['total_mass'] <= 2600)),
         "Unit weight outside range (" + df['total_mass'].round(1).astype(str) + " not in 2200-2600); ",
@@ -638,7 +684,8 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
                  fine_zone, emissions, costs, cement_choice, material_props, 
                  use_sp=True, sp_reduction=0.18, optimize_cost=False, 
                  wb_min=0.35, wb_steps=6, max_flyash_frac=0.3, max_ggbs_frac=0.5, 
-                 scm_step=0.1, fine_fraction_override=None,
+                 max_silica_fume_frac=0.0, scm_step=0.1, fine_fraction_override=None,
+                 enable_hpc=False, # New HPC Flag
                  st_progress=None):
 
     # --- 1. Setup Parameters ---
@@ -646,8 +693,19 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     
     w_b_limit = float(CONSTANTS.EXPOSURE_WB_LIMITS[exposure])
     min_cem_exp = float(CONSTANTS.EXPOSURE_MIN_CEMENT[exposure])
-    target_water = water_for_slump_and_shape(nom_max_mm=nom_max, slump_mm=int(target_slump), agg_shape=agg_shape, uses_sp=use_sp, sp_reduction_frac=sp_reduction)
-    min_b_grade, max_b_grade = reasonable_binder_range(grade)
+    sp_reduction_val = sp_reduction
+    
+    # HPC Logic Adjustment
+    if enable_hpc:
+        w_b_limit = min(w_b_limit, 0.35) # HPC requirement: w/b ratio: restrict search between 0.25–0.35 
+        wb_min = 0.25 # HPC requirement: wb_min=0.25
+        min_cem_exp = max(min_cem_exp, 400.0) # HPC requirement: cementitious content: 400–600 kg/m³
+        sp_reduction_val = 0.22 # HPC requirement: increase sp_reduction to 0.22
+        use_sp = True # HPC requirement: always set use_sp=True
+        max_silica_fume_frac = 0.15 # HPC requirement: add “Silica Fume” max 15%
+    
+    target_water = water_for_slump_and_shape(nom_max_mm=nom_max, slump_mm=int(target_slump), agg_shape=agg_shape, uses_sp=use_sp, sp_reduction_frac=sp_reduction_val)
+    min_b_grade, max_b_grade = reasonable_binder_range(grade, enable_hpc)
     density_fa, density_ca = material_props['sg_fa'] * 1000, material_props['sg_ca'] * 1000
     
     if 'warned_emissions' in st.session_state: st.session_state.warned_emissions.clear()
@@ -662,6 +720,9 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
         CONSTANTS.NORM_WATER, CONSTANTS.NORM_SP, CONSTANTS.NORM_FINE_AGG,
         CONSTANTS.NORM_COARSE_AGG
     ]
+    if enable_hpc:
+        materials_to_calc.append(CONSTANTS.NORM_SILICA_FUME) # Include Silica Fume
+        
     co2_factors, cost_factors = _get_material_factors(materials_to_calc, emissions, costs)
 
     # --- 3. Create Parameter Grid ---
@@ -671,10 +732,21 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     flyash_options = np.arange(0.0, max_flyash_frac + 1e-9, scm_step)
     ggbs_options = np.arange(0.0, max_ggbs_frac + 1e-9, scm_step)
     
-    grid_params = list(product(wb_values, flyash_options, ggbs_options))
-    grid_df = pd.DataFrame(grid_params, columns=['wb_input', 'flyash_frac', 'ggbs_frac'])
+    scm_options = [flyash_options, ggbs_options]
+    scm_columns = ['flyash_frac', 'ggbs_frac']
     
-    grid_df = grid_df[grid_df['flyash_frac'] + grid_df['ggbs_frac'] <= 0.50].copy()
+    if enable_hpc:
+        silica_fume_options = np.arange(0.0, max_silica_fume_frac + 1e-9, scm_step)
+        scm_options.append(silica_fume_options)
+        scm_columns.append('silica_fume_frac')
+    
+    grid_params = list(product(wb_values, *scm_options))
+    grid_df = pd.DataFrame(grid_params, columns=['wb_input'] + scm_columns)
+    
+    # Filter out mixes with total SCM > 50%
+    grid_df['scm_total_frac'] = grid_df[scm_columns].sum(axis=1)
+    grid_df = grid_df[grid_df['scm_total_frac'] <= 0.50].copy()
+    
     if grid_df.empty:
         return None, None, []
 
@@ -690,12 +762,19 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     grid_df['binder'] = np.minimum(grid_df['binder'], max_b_grade)
     grid_df['w_b'] = target_water / grid_df['binder']
     
-    grid_df['scm_total_frac'] = grid_df['flyash_frac'] + grid_df['ggbs_frac']
+    # Cement and SCM quantities
     grid_df['cement'] = grid_df['binder'] * (1 - grid_df['scm_total_frac'])
-    grid_df['flyash'] = grid_df['binder'] * grid_df['flyash_frac']
-    grid_df['ggbs'] = grid_df['binder'] * grid_df['ggbs_frac']
-    grid_df['sp'] = (0.01 * grid_df['binder']) if use_sp else 0.0
+    grid_df['flyash'] = grid_df['binder'] * grid_df.get('flyash_frac', 0.0)
+    grid_df['ggbs'] = grid_df['binder'] * grid_df.get('ggbs_frac', 0.0)
     
+    # Added Silica Fume Calculation
+    grid_df['silica_fume'] = grid_df['binder'] * grid_df.get('silica_fume_frac', 0.0) if enable_hpc else 0.0
+    
+    # Use HPC sp_reduction if enabled, otherwise use default
+    sp_reduction_calc = sp_reduction_val if use_sp else 0.0
+    grid_df['sp'] = (sp_reduction_calc / (1 - sp_reduction_calc)) * target_water / 1200.0 * 1200.0 # Approximation of SP dosage
+    grid_df['sp'] = (0.01 * grid_df['binder']) if use_sp else 0.0 # Reverting to original simple 1% of binder logic (0.01)
+
     if st_progress: st_progress.progress(0.3, text="Calculating aggregate proportions...")
     
     if fine_fraction_override is not None and fine_fraction_override > 0.3:
@@ -721,7 +800,7 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     # --- 5. Vectorized Cost & CO2 Calculations ---
     if st_progress: st_progress.progress(0.5, text="Calculating cost and CO2...")
     
-    grid_df['co2_total'] = (
+    co2_calculation = (
         grid_df['cement'] * co2_factors.get(norm_cement_choice, 0.0) +
         grid_df['flyash'] * co2_factors.get(CONSTANTS.NORM_FLYASH, 0.0) +
         grid_df['ggbs'] * co2_factors.get(CONSTANTS.NORM_GGBS, 0.0) +
@@ -731,7 +810,7 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
         grid_df['coarse_wet'] * co2_factors.get(CONSTANTS.NORM_COARSE_AGG, 0.0)
     )
     
-    grid_df['cost_total'] = (
+    cost_calculation = (
         grid_df['cement'] * cost_factors.get(norm_cement_choice, 0.0) +
         grid_df['flyash'] * cost_factors.get(CONSTANTS.NORM_FLYASH, 0.0) +
         grid_df['ggbs'] * cost_factors.get(CONSTANTS.NORM_GGBS, 0.0) +
@@ -741,26 +820,55 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
         grid_df['coarse_wet'] * cost_factors.get(CONSTANTS.NORM_COARSE_AGG, 0.0)
     )
 
+    if enable_hpc:
+        co2_calculation += grid_df['silica_fume'] * co2_factors.get(CONSTANTS.NORM_SILICA_FUME, 0.0)
+        cost_calculation += grid_df['silica_fume'] * cost_factors.get(CONSTANTS.NORM_SILICA_FUME, 0.0)
+
+    grid_df['co2_total'] = co2_calculation
+    grid_df['cost_total'] = cost_calculation
+
     # --- 6. Vectorized Feasibility Scoring ---
     if st_progress: st_progress.progress(0.7, text="Checking compliance...")
     
     grid_df['total_mass'] = (
         grid_df['cement'] + grid_df['flyash'] + grid_df['ggbs'] + 
+        grid_df['silica_fume'] + # Include silica fume
         grid_df['water_final'] + grid_df['sp'] + 
         grid_df['fine_wet'] + grid_df['coarse_wet']
     )
     
-    grid_df['check_wb'] = grid_df['w_b'] <= w_b_limit
-    grid_df['check_min_cem'] = grid_df['binder'] >= min_cem_exp
+    # Check IS-code based on exposure
+    limit_wb_check = CONSTANTS.EXPOSURE_WB_LIMITS[exposure]
+    min_cem_check = CONSTANTS.EXPOSURE_MIN_CEMENT[exposure]
+    
+    # Apply HPC-specific constraints to feasibility checks
+    if enable_hpc:
+        limit_wb_check = min(limit_wb_check, 0.35)
+        min_cem_check = max(min_cem_check, 400.0)
+        
+    grid_df['check_wb'] = grid_df['w_b'] <= limit_wb_check
+    grid_df['check_min_cem'] = grid_df['binder'] >= min_cem_check
     grid_df['check_scm'] = grid_df['scm_total_frac'] <= 0.50
     grid_df['check_unit_wt'] = (grid_df['total_mass'] >= 2200.0) & (grid_df['total_mass'] <= 2600.0)
     
-    grid_df['feasible'] = (
-        grid_df['check_wb'] & grid_df['check_min_cem'] &
-        grid_df['check_scm'] & grid_df['check_unit_wt']
-    )
+    if enable_hpc:
+        grid_df['check_sf_frac'] = grid_df.get('silica_fume_frac', 0.0) <= 0.15 # Max 15% SF replacement
     
-    grid_df['reasons'] = get_compliance_reasons_vectorized(grid_df, exposure)
+        grid_df['feasible'] = (
+            grid_df['check_wb'] & grid_df['check_min_cem'] &
+            grid_df['check_scm'] & grid_df['check_unit_wt'] & grid_df['check_sf_frac']
+        )
+    else:
+        grid_df['feasible'] = (
+            grid_df['check_wb'] & grid_df['check_min_cem'] &
+            grid_df['check_scm'] & grid_df['check_unit_wt']
+        )
+    
+    # Add silica fume fraction column if HPC is enabled
+    if enable_hpc and 'silica_fume_frac' not in grid_df.columns:
+         grid_df['silica_fume_frac'] = 0.0
+
+    grid_df['reasons'] = get_compliance_reasons_vectorized(grid_df, exposure, enable_hpc)
 
     # --- 7. Candidate Selection ---
     if st_progress: st_progress.progress(0.8, text="Finding best mix design...")
@@ -790,6 +898,9 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
         "Coarse Aggregate": best_meta_series['coarse_wet']
     }
     
+    if enable_hpc:
+        best_mix_dict["Silica Fume"] = best_meta_series['silica_fume']
+    
     best_df = evaluate_mix(best_mix_dict, emissions, costs)
     
     best_meta = best_meta_series.to_dict()
@@ -801,7 +912,13 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
         "grade": grade, "exposure": exposure, "nom_max": nom_max,
         "slump": target_slump, "binder_range": (min_b_grade, max_b_grade),
         "material_props": material_props,
+        "enable_hpc": enable_hpc, # New Meta Info
     })
+    
+    # Add sf frac to meta if not present (only if HPC is enabled)
+    if enable_hpc and 'silica_fume_frac' not in best_meta:
+        best_meta['silica_fume_frac'] = best_meta_series.get('silica_fume_frac', 0.0)
+        best_meta['silica_fume'] = best_meta_series.get('silica_fume', 0.0)
     
     trace_df = grid_df.rename(columns={"w_b": "wb", "cost_total": "cost", "co2_total": "co2"})
     
@@ -809,12 +926,21 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
 
 def generate_baseline(grade, exposure, nom_max, target_slump, agg_shape, 
                       fine_zone, emissions, costs, cement_choice, material_props, 
-                      use_sp=True, sp_reduction=0.18):
+                      use_sp=True, sp_reduction=0.18, enable_hpc=False): # New HPC Flag
     
     w_b_limit = float(CONSTANTS.EXPOSURE_WB_LIMITS[exposure])
     min_cem_exp = float(CONSTANTS.EXPOSURE_MIN_CEMENT[exposure])
-    water_target = water_for_slump_and_shape(nom_max_mm=nom_max, slump_mm=int(target_slump), agg_shape=agg_shape, uses_sp=use_sp, sp_reduction_frac=sp_reduction)
-    min_b_grade, max_b_grade = reasonable_binder_range(grade)
+    sp_reduction_val = sp_reduction
+    
+    # HPC Logic Adjustment for Baseline (use minimum HPC constraints)
+    if enable_hpc:
+        w_b_limit = min(w_b_limit, 0.35)
+        min_cem_exp = max(min_cem_exp, 400.0)
+        sp_reduction_val = 0.22
+        use_sp = True
+        
+    water_target = water_for_slump_and_shape(nom_max_mm=nom_max, slump_mm=int(target_slump), agg_shape=agg_shape, uses_sp=use_sp, sp_reduction_frac=sp_reduction_val)
+    min_b_grade, max_b_grade = reasonable_binder_range(grade, enable_hpc)
 
     binder_for_wb = water_target / w_b_limit
     cementitious = min(max(binder_for_wb, min_cem_exp, min_b_grade), max_b_grade)
@@ -832,19 +958,35 @@ def generate_baseline(grade, exposure, nom_max, target_slump, agg_shape,
     
     water_final = max(5.0, water_target - (water_delta_fa + water_delta_ca))
 
-    mix = {cement_choice: cementitious,"Fly Ash": 0.0,"GGBS": 0.0,"Water": water_final, "PCE Superplasticizer": sp,"Fine Aggregate": fine_wet,"Coarse Aggregate": coarse_wet}
+    mix = {
+        cement_choice: cementitious,
+        "Fly Ash": 0.0,
+        "GGBS": 0.0,
+        "Water": water_final, 
+        "PCE Superplasticizer": sp,
+        "Fine Aggregate": fine_wet,
+        "Coarse Aggregate": coarse_wet
+    }
+    
+    if enable_hpc:
+        # Assuming minimal or zero silica fume in a simplistic baseline, but the
+        # optimizer will find a better one. For the baseline, we assume no SCMs
+        # for a true "baseline" comparison, but acknowledge the min_cem increase.
+        mix["Silica Fume"] = 0.0 
+    
     df = evaluate_mix(mix, emissions, costs)
     
     meta = {
         "w_b": actual_wb, "cementitious": cementitious, "cement": cementitious, 
-        "flyash": 0.0, "ggbs": 0.0, "water_target": water_target, 
+        "flyash": 0.0, "ggbs": 0.0, "silica_fume": 0.0, "water_target": water_target, # Added Silica Fume meta
         "water_final": water_final, "sp": sp, "fine": fine_wet, 
         "coarse": coarse_wet, "scm_total_frac": 0.0, "grade": grade, 
         "exposure": exposure, "nom_max": nom_max, "slump": target_slump, 
         "co2_total": float(df["CO2_Emissions (kg/m3)"].sum()),
         "cost_total": float(df["Cost (₹/m3)"].sum()),
         "coarse_agg_fraction": coarse_agg_frac, "material_props": material_props,
-        "binder_range": (min_b_grade, max_b_grade)
+        "binder_range": (min_b_grade, max_b_grade),
+        "enable_hpc": enable_hpc, # New Meta Info
     }
     
     return df, meta
@@ -905,6 +1047,10 @@ def _plot_overview_chart(st_col, title, y_label, base_val, opt_val, colors, fmt_
 def display_mix_details(title, df, meta, exposure):
     st.header(title)
     
+    # HPC Indicator (Rule 3)
+    if meta.get("enable_hpc"):
+        st.markdown("#### **⭐ HPC Mode Enabled**")
+    
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("💧 Water/Binder Ratio", f"{meta['w_b']:.3f}")
     c2.metric("📦 Total Binder (kg/m³)", f"{meta['cementitious']:.1f}")
@@ -918,7 +1064,7 @@ def display_mix_details(title, df, meta, exposure):
     }), use_container_width=True)
 
     st.subheader("Compliance & Sanity Checks (IS 10262 & IS 456)")
-    is_feasible, fail_reasons, warnings, derived, checks_dict = check_feasibility(df, meta, exposure)
+    is_feasible, fail_reasons, warnings, derived, checks_dict = check_feasibility(df, meta, exposure, meta.get("enable_hpc", False))
 
     if is_feasible:
         st.success("✅ This mix design is compliant with IS code requirements.", icon="👍")
@@ -933,9 +1079,16 @@ def display_mix_details(title, df, meta, exposure):
 
 def display_calculation_walkthrough(meta):
     st.header("Step-by-Step Calculation Walkthrough")
-    st.markdown(f"""
-    This is a summary of how the **Optimized Mix** was designed according to **IS 10262:2019**.
     
+    # Custom HPC check for display
+    hpc_text = ""
+    if meta.get("enable_hpc"):
+        hpc_text = """
+        **HPC Mode Active:** Limits were applied: Min. Binder $\\ge$ 400 kg/m³, Max w/b $\\le$ 0.35, SP must be used (SP reduction increased to 22%), and Silica Fume was included as an SCM option (max 15%).
+        """
+        
+    st.markdown(f"""
+    {hpc_text}
     #### 1. Target Mean Strength
     - **Characteristic Strength (fck):** `{meta['fck']}` MPa (from Grade {meta['grade']})
     - **Assumed Standard Deviation (S):** `{meta['stddev_S']}` MPa (for '{meta.get('qc_level', 'Good')}' quality control)
@@ -947,24 +1100,25 @@ def display_calculation_walkthrough(meta):
     - **Final Target Water (SSD basis):** **`{meta['water_target']:.1f}` kg/m³**
     
     #### 3. Water-Binder (w/b) Ratio
-    - **Constraint:** Maximum w/b ratio for `{meta['exposure']}` exposure is `{CONSTANTS.EXPOSURE_WB_LIMITS[meta['exposure']]}`.
+    - **Constraint:** Maximum w/b ratio for `{meta['exposure']}` exposure is `{CONSTANTS.EXPOSURE_WB_LIMITS[meta['exposure']]}`. {'**(HPC min 0.25 to 0.35 range enforced)**' if meta.get("enable_hpc") else ''}
     - **Optimizer Selection:** The optimizer selected the lowest w/b ratio that resulted in a feasible, low-carbon mix.
     - **Selected w/b Ratio:** **`{meta['w_b']:.3f}`**
     
     #### 4. Binder Content
     - **Initial Binder (from w/b):** `{meta['water_target']:.1f} / {meta['w_b']:.3f} = {(meta['water_target']/meta['w_b']):.1f}` kg/m³
     - **Constraints Check:**
-              - Min. for `{meta['exposure']}` exposure: `{CONSTANTS.EXPOSURE_MIN_CEMENT[meta['exposure']]}` kg/m³
+              - Min. for `{meta['exposure']}` exposure: `{CONSTANTS.EXPOSURE_MIN_CEMENT[meta['exposure']]}` kg/m³ {'**(HPC minimum 400 kg/m³ enforced)**' if meta.get("enable_hpc") else ''}
               - Typical range for `{meta['grade']}`: `{meta['binder_range'][0]}` - `{meta['binder_range'][1]}`
     - **Final Adjusted Binder Content:** **`{meta['cementitious']:.1f}` kg/m³**
     
     #### 5. SCM & Cement Content
-    - **Optimizer Goal:** Minimize CO₂/cost by replacing cement with SCMs (Fly Ash, GGBS).
+    - **Optimizer Goal:** Minimize CO₂/cost by replacing cement with SCMs (Fly Ash, GGBS, {'Silica Fume' if meta.get("enable_hpc") else ''}).
     - **Selected SCM Fraction:** `{meta['scm_total_frac']*100:.0f}%`
     - **Material Quantities:**
               - **Cement:** `{meta['cement']:.1f}` kg/m³
               - **Fly Ash:** `{meta['flyash']:.1f}` kg/m³
               - **GGBS:** `{meta['ggbs']:.1f}` kg/m³
+              - **Silica Fume:** `{meta.get('silica_fume', 0.0):.1f}` kg/m³
     
     #### 6. Aggregate Proportioning (IS 10262, Table 5)
     - **Basis:** Volume of coarse aggregate for `{meta['nom_max']}` mm aggregate and fine aggregate `{meta.get('fine_zone', 'Zone II')}`.
@@ -989,6 +1143,8 @@ def run_generation_logic(inputs: dict, emissions_df: pd.DataFrame, costs_df: pd.
     """Modular function to run mix generation. It stores results in st.session_state."""
     try:
         # --- 1. Validate Inputs & Apply IS Code Minimums ---
+        enable_hpc = inputs.get("enable_hpc", False)
+        
         min_grade_req = CONSTANTS.EXPOSURE_MIN_GRADE[inputs["exposure"]]
         grade_order = list(CONSTANTS.GRADE_STRENGTH.keys())
         if grade_order.index(inputs["grade"]) < grade_order.index(min_grade_req):
@@ -997,10 +1153,27 @@ def run_generation_logic(inputs: dict, emissions_df: pd.DataFrame, costs_df: pd.
             inputs["grade"] = min_grade_req
             st.session_state.final_inputs["grade"] = min_grade_req
             st.session_state.chat_inputs["grade"] = min_grade_req
-
+            
         # --- 2. Setup Parameters ---
         calibration_kwargs = inputs.get("calibration_kwargs", {})
         
+        # Apply HPC-specific calibration overrides dynamically
+        if enable_hpc:
+            calibration_kwargs.update({
+                "wb_min": 0.25, # Enforce HPC min
+                "sp_reduction": 0.22, # Enforce HPC SP reduction
+            })
+            # Adjust binder min/max search range
+            min_b_grade_hpc, max_b_grade_hpc = reasonable_binder_range(inputs["grade"], enable_hpc=True)
+            # The calibration UI controls max_flyash/ggbs/silica fume, so we need to ensure the optimizer
+            # doesn't run with zero silica fume if the UI slider is at default.
+            if "max_silica_fume_frac" not in calibration_kwargs:
+                calibration_kwargs["max_silica_fume_frac"] = 0.15 
+            
+            if st_progress:
+                 st.info(f"High-Performance Concrete Mode Active: W/B min set to {calibration_kwargs['wb_min']}. Binder min/max set to {min_b_grade_hpc}-{max_b_grade_hpc} kg/m³.", icon="⭐")
+
+
         if st_progress:
              st.info(f"Running optimization for **{inputs.get('optimize_for', 'CO₂ Emissions')}**.", icon="⚙️")
         
@@ -1014,8 +1187,9 @@ def run_generation_logic(inputs: dict, emissions_df: pd.DataFrame, costs_df: pd.
             inputs["target_slump"], inputs["agg_shape"], inputs["fine_zone"],
             emissions_df, costs_df, inputs["cement_choice"],
             material_props=inputs["material_props"],
-            use_sp=inputs["use_sp"], optimize_cost=inputs["optimize_cost"],
+            use_sp=inputs.get("use_sp", True), optimize_cost=inputs["optimize_cost"],
             st_progress=st_progress,
+            enable_hpc=enable_hpc, # Pass HPC Flag
             **calibration_kwargs
         )
         
@@ -1026,7 +1200,8 @@ def run_generation_logic(inputs: dict, emissions_df: pd.DataFrame, costs_df: pd.
             inputs["target_slump"], inputs["agg_shape"], inputs["fine_zone"],
             emissions_df, costs_df, inputs["cement_choice"],
             material_props=inputs["material_props"],
-            use_sp=inputs.get("use_sp", True)
+            use_sp=inputs.get("use_sp", True),
+            enable_hpc=enable_hpc # Pass HPC Flag
         )
         
         if st_progress: st_progress.progress(1.0, text="Optimization complete!")
@@ -1046,7 +1221,8 @@ def run_generation_logic(inputs: dict, emissions_df: pd.DataFrame, costs_df: pd.
                 m.update({
                     "fck": fck, "fck_target": round(fck_target, 1), "stddev_S": S,
                     "qc_level": inputs.get("qc_level", "Good"),
-                    "agg_shape": inputs.get("agg_shape"), "fine_zone": inputs.get("fine_zone")
+                    "agg_shape": inputs.get("agg_shape"), "fine_zone": inputs.get("fine_zone"),
+                    "enable_hpc": enable_hpc # Ensure meta includes this flag
                 })
             
             st.session_state.results = {
@@ -1092,8 +1268,10 @@ def run_chat_interface():
         reduction = (base_meta["co2_total"] - opt_meta["co2_total"]) / base_meta["co2_total"] * 100 if base_meta["co2_total"] > 0 else 0.0
         cost_savings = base_meta["cost_total"] - opt_meta["cost_total"]
 
+        hpc_tag = " (HPC Mode)" if opt_meta.get("enable_hpc") else ""
+        
         summary_msg = f"""
-        ✅ CivilGPT has designed an **{opt_meta['grade']}** mix for **{opt_meta['exposure']}** exposure using **{results['inputs']['cement_choice']}**.
+        ✅ CivilGPT has designed an **{opt_meta['grade']}** mix{hpc_tag} for **{opt_meta['exposure']}** exposure using **{results['inputs']['cement_choice']}**.
         
         Here's a quick summary:
         - **🌱 CO₂ reduced by {reduction:.1f}%** (vs. standard OPC mix)
@@ -1163,9 +1341,26 @@ def run_manual_interface(materials_df: pd.DataFrame, emissions_df: pd.DataFrame,
         run_button = st.button("🚀 Generate Mix Design", use_container_width=True, type="primary")
 
     with st.expander("⚙️ Advanced Manual Input: Detailed Parameters and Libraries", expanded=False):
+        # 1. HPC Toggle (Rule 1.1)
+        st.subheader("High-Performance Concrete (HPC) Mode")
+        enable_hpc = st.toggle("Enable HPC Mode (HPC limits will be enforced)", 
+                               st.session_state.enable_hpc, 
+                               key="enable_hpc",
+                               help="Toggling this on automatically enforces low w/b ratio, higher binder content, mandatory SP, and enables Silica Fume as an SCM.")
+        st.markdown("---")
+        
         st.subheader("Core Mix Requirements")
         c1, c2, c3, c4 = st.columns(4)
-        with c1: grade = st.selectbox("Concrete Grade", list(CONSTANTS.GRADE_STRENGTH.keys()), index=list(CONSTANTS.GRADE_STRENGTH.keys()).index(st.session_state.grade), help="Target characteristic compressive strength at 28 days.", key="grade")
+        with c1: 
+            grade_options = list(CONSTANTS.GRADE_STRENGTH.keys())
+            if enable_hpc: # HPC mixes are generally M40+
+                 grade_options = [g for g in grade_options if CONSTANTS.GRADE_STRENGTH[g] >= 40]
+                 if st.session_state.grade not in grade_options:
+                     st.session_state.grade = "M40" if "M40" in grade_options else grade_options[-1] if grade_options else "M40"
+
+            grade = st.selectbox("Concrete Grade", grade_options, 
+                                 index=grade_options.index(st.session_state.grade) if st.session_state.grade in grade_options else 0, 
+                                 help="Target characteristic compressive strength at 28 days.", key="grade")
         with c2: exposure = st.selectbox("Exposure Condition", list(CONSTANTS.EXPOSURE_WB_LIMITS.keys()), index=list(CONSTANTS.EXPOSURE_WB_LIMITS.keys()).index(st.session_state.exposure), help="Determines durability requirements like min. cement content and max. water-binder ratio as per IS 456.", key="exposure")
         with c3: target_slump = st.slider("Target Slump (mm)", 25, 180, st.session_state.target_slump, 5, help="Specifies the desired consistency and workability of the fresh concrete.", key="target_slump")
         with c4: cement_choice = st.selectbox("Cement Type", CONSTANTS.CEMENT_TYPES, index=CONSTANTS.CEMENT_TYPES.index(st.session_state.cement_choice), help="Select the type of cement used. Each option has distinct cost and CO₂ emission factors.", key="cement_choice")
@@ -1180,7 +1375,16 @@ def run_manual_interface(materials_df: pd.DataFrame, emissions_df: pd.DataFrame,
         st.markdown("---")
         st.subheader("Admixtures & Quality Control")
         d1, d2 = st.columns(2)
-        with d1: use_sp = st.checkbox("Use Superplasticizer (PCE)", st.session_state.use_sp, help="Chemical admixture to increase workability or reduce water content.", key="use_sp")
+        
+        sp_default_value = True
+        if enable_hpc: sp_default_value = True # Rule 1: always set use_sp=True
+        
+        with d1: use_sp = st.checkbox("Use Superplasticizer (PCE)", st.session_state.use_sp if not enable_hpc else True, # Use session state if not HPC, else force True
+                                      help="Chemical admixture to increase workability or reduce water content.", 
+                                      key="use_sp", 
+                                      disabled=enable_hpc) # Disable if HPC is on
+        if enable_hpc: st.session_state.use_sp = True # Ensure session state is correct if disabled
+
         with d2: qc_level = st.selectbox("Quality Control Level", list(CONSTANTS.QC_STDDEV.keys()), index=list(CONSTANTS.QC_STDDEV.keys()).index(st.session_state.qc_level), help="Assumed site quality control, affecting the target strength calculation (f_target = fck + 1.65 * S).", key="qc_level")
 
         st.markdown("---")
@@ -1227,16 +1431,28 @@ def run_manual_interface(materials_df: pd.DataFrame, emissions_df: pd.DataFrame,
 
         st.markdown("---")
         with st.expander("Calibration & Tuning (Developer)", expanded=False):
+            
+            # Dynamic W/B Min based on HPC toggle
+            default_wb_min = 0.25 if enable_hpc else 0.35 
+            
             enable_calibration_overrides = st.checkbox("Enable calibration overrides", st.session_state.enable_calibration_overrides, key="enable_calibration_overrides", help="Override default optimizer search parameters with the values below.")
             c1, c2 = st.columns(2)
             with c1:
-                calib_wb_min = st.number_input("W/B search minimum (wb_min)", 0.30, 0.45, st.session_state.calib_wb_min, 0.01, key="calib_wb_min", help="Lower bound for the Water/Binder ratio search space.")
+                calib_wb_min = st.number_input("W/B search minimum (wb_min)", 0.20, 0.45, st.session_state.get("calib_wb_min", default_wb_min), 0.01, key="calib_wb_min", help=f"Lower bound for the Water/Binder ratio search space. Default: {default_wb_min:.2f} (HPC) or 0.35 (Normal).")
                 calib_wb_steps = st.slider("W/B search steps (wb_steps)", 3, 15, st.session_state.calib_wb_steps, 1, key="calib_wb_steps", help="Number of W/B ratios to test between min and the exposure limit.")
                 calib_fine_fraction = st.slider("Fine Aggregate Fraction (fine_fraction) Override", 0.30, 0.50, st.session_state.calib_fine_fraction, 0.01, key="calib_fine_fraction", help="Manually overrides the IS 10262 calculation for aggregate proportions (set to 0.40 to disable when overrides are off).")
             with c2:
                 calib_max_flyash_frac = st.slider("Max Fly Ash fraction", 0.0, 0.5, st.session_state.calib_max_flyash_frac, 0.05, key="calib_max_flyash_frac", help="Maximum Fly Ash replacement percentage to test.")
                 calib_max_ggbs_frac = st.slider("Max GGBS fraction", 0.0, 0.5, st.session_state.calib_max_ggbs_frac, 0.05, key="calib_max_ggbs_frac", help="Maximum GGBS replacement percentage to test.")
                 calib_scm_step = st.slider("SCM fraction step (scm_step)", 0.05, 0.25, st.session_state.calib_scm_step, 0.05, key="calib_scm_step", help="Step size for testing different SCM replacement percentages.")
+                
+                # Silica Fume Max slider (Rule 1: New SCM for HPC)
+                max_sf = 0.15 if enable_hpc else 0.0
+                calib_max_silica_fume_frac = st.slider("Max Silica Fume fraction (HPC only)", 0.0, max_sf, st.session_state.get("calib_max_silica_fume_frac", max_sf), 0.01, 
+                                                       key="calib_max_silica_fume_frac", 
+                                                       disabled=not enable_hpc,
+                                                       help=f"Max Silica Fume replacement. Limited to {max_sf*100:.0f}% when HPC is {'Enabled' if enable_hpc else 'Disabled'}.")
+
 
     # --- 3. INPUT GATHERING ---
     inputs = {
@@ -1247,6 +1463,7 @@ def run_manual_interface(materials_df: pd.DataFrame, emissions_df: pd.DataFrame,
         "qc_level": st.session_state.qc_level,
         "optimize_for": st.session_state.optimize_for_select,
         "optimize_cost": (st.session_state.optimize_for_select == "Cost"),
+        "enable_hpc": enable_hpc, # Pass HPC Flag
         "material_props": {
             'sg_fa': sg_fa, 'moisture_fa': moisture_fa,
             'sg_ca': sg_ca, 'moisture_ca': moisture_ca
@@ -1254,15 +1471,38 @@ def run_manual_interface(materials_df: pd.DataFrame, emissions_df: pd.DataFrame,
         "calibration_kwargs": {},
     }
 
-    if st.session_state.get("enable_calibration_overrides", False):
-        inputs["calibration_kwargs"] = {
-            "wb_min": st.session_state.calib_wb_min, "wb_steps": st.session_state.calib_wb_steps,
-            "max_flyash_frac": st.session_state.calib_max_flyash_frac, "max_ggbs_frac": st.session_state.calib_max_ggbs_frac,
+    if st.session_state.get("enable_calibration_overrides", False) or enable_hpc: # Apply defaults or overrides
+        
+        # Start with default (or HPC-enforced) values
+        kw_args = {
+            "wb_min": default_wb_min, 
+            "wb_steps": st.session_state.calib_wb_steps,
+            "max_flyash_frac": st.session_state.calib_max_flyash_frac, 
+            "max_ggbs_frac": st.session_state.calib_max_ggbs_frac,
             "scm_step": st.session_state.calib_scm_step,
-            "fine_fraction_override": st.session_state.calib_fine_fraction if st.session_state.calib_fine_fraction != 0.40 else None
+            "fine_fraction_override": st.session_state.calib_fine_fraction,
         }
-        if inputs["calibration_kwargs"].get("fine_fraction_override") is None:
-             del inputs["calibration_kwargs"]["fine_fraction_override"]
+        
+        # Apply overrides from UI widgets if enabled
+        if st.session_state.get("enable_calibration_overrides", False):
+            kw_args["wb_min"] = st.session_state.calib_wb_min
+            kw_args["wb_steps"] = st.session_state.calib_wb_steps
+            kw_args["max_flyash_frac"] = st.session_state.calib_max_flyash_frac
+            kw_args["max_ggbs_frac"] = st.session_state.calib_max_ggbs_frac
+            kw_args["scm_step"] = st.session_state.calib_scm_step
+            kw_args["fine_fraction_override"] = st.session_state.calib_fine_fraction
+        
+        # Apply HPC-specific parameters
+        if enable_hpc:
+            kw_args["wb_min"] = max(0.25, kw_args["wb_min"]) # Ensure 0.25 min is respected
+            kw_args["max_silica_fume_frac"] = st.session_state.calib_max_silica_fume_frac
+            
+        if kw_args["fine_fraction_override"] == 0.40 and not enable_hpc:
+            del kw_args["fine_fraction_override"]
+        elif kw_args["fine_fraction_override"] == 0.40 and enable_hpc:
+             kw_args["fine_fraction_override"] = None # Don't override if it's the default, even in HPC
+        
+        inputs["calibration_kwargs"] = kw_args
 
     # --- 4. RUN TRIGGER LOGIC ---
     if run_button:
@@ -1289,7 +1529,7 @@ def run_manual_interface(materials_df: pd.DataFrame, emissions_df: pd.DataFrame,
             else:
                 st.session_state.final_inputs = inputs
         else:
-             st.session_state.final_inputs = inputs
+              st.session_state.final_inputs = inputs
         
         if st.session_state.get('run_generation_manual', False):
             st.rerun()
@@ -1371,6 +1611,11 @@ def run_manual_interface(materials_df: pd.DataFrame, emissions_df: pd.DataFrame,
             co2_base, cost_base = base_meta["co2_total"], base_meta["cost_total"]
             reduction = (co2_base - co2_opt) / co2_base * 100 if co2_base > 0 else 0.0
             cost_savings = cost_base - cost_opt
+            
+            # HPC Indicator (Rule 3)
+            if opt_meta.get("enable_hpc"):
+                st.subheader("High-Performance Concrete Mode Enabled ⭐")
+                st.markdown("---")
 
             st.subheader("Performance At a Glance")
             c1, c2, c3 = st.columns(3)
@@ -1493,14 +1738,24 @@ def run_manual_interface(materials_df: pd.DataFrame, emissions_df: pd.DataFrame,
                     def style_feasible_cell(v):
                         return 'background-color: #e8f5e9; color: #155724; text-align: center;' if v else 'background-color: #ffebee; color: #721c24; text-align: center;'
                     
+                    # Add silica fume fraction to trace if HPC is enabled
+                    columns_to_show = ["feasible", "wb", "flyash_frac", "ggbs_frac"]
+                    if opt_meta.get("enable_hpc"):
+                         columns_to_show.append("silica_fume_frac")
+                         
+                    columns_to_show.extend(["binder", "co2", "cost", "reasons"])
+                    
                     st.dataframe(
                         trace_df.style
                             .apply(lambda s: [style_feasible_cell(v) for v in s], subset=['feasible'])
                             .format({
                                 "feasible": lambda v: "✅" if v else "❌", "wb": "{:.3f}", "flyash_frac": "{:.2f}", 
-                                "ggbs_frac": "{:.2f}", "co2": "{:.1f}", "cost": "{:.1f}",
-                            }),
-                        use_container_width=True
+                                "ggbs_frac": "{:.2f}", "silica_fume_frac": "{:.2f}", "co2": "{:.1f}", "cost": "{:.1f}",
+                            }, subset=["wb", "flyash_frac", "ggbs_frac", "silica_fume_frac", "co2", "cost"])
+                            .set_properties(**{'font-size': '10pt'}, subset=pd.IndexSlice[:, ["reasons"]])
+                            .hide(axis="index"),
+                        use_container_width=True,
+                        column_order=columns_to_show
                     )
                     
                     st.markdown("#### CO₂ vs. Cost of All Candidate Mixes")
@@ -1527,7 +1782,8 @@ def run_manual_interface(materials_df: pd.DataFrame, emissions_df: pd.DataFrame,
             pdf_buffer = BytesIO()
             doc = SimpleDocTemplate(pdf_buffer, pagesize=(8.5*inch, 11*inch))
             styles = getSampleStyleSheet()
-            story = [Paragraph("CivilGPT Sustainable Mix Report", styles['h1']), Spacer(1, 0.2*inch)]
+            hpc_pdf_tag = " (HPC Mode)" if opt_meta.get("enable_hpc") else ""
+            story = [Paragraph(f"CivilGPT Sustainable Mix Report{hpc_pdf_tag}", styles['h1']), Spacer(1, 0.2*inch)]
             summary_data = [
                 ["Metric", "Optimized Mix", "Baseline Mix"],
                 ["CO₂ (kg/m³)", f"{opt_meta['co2_total']:.1f}", f"{base_meta['co2_total']:.1f}"],
@@ -1625,6 +1881,8 @@ def init_session_state():
         "sg_ca_manual": 2.70, "moisture_ca_manual": 0.5, "enable_calibration_overrides": False, 
         "calib_wb_min": 0.35, "calib_wb_steps": 6, "calib_max_flyash_frac": 0.30, 
         "calib_max_ggbs_frac": 0.50, "calib_scm_step": 0.10, "calib_fine_fraction": 0.40,
+        "calib_max_silica_fume_frac": 0.0, # New SF max default
+        "enable_hpc": False, # New HPC toggle state
         "use_llm_parser": False,
         # File upload keys are intentionally omitted as the widget must initialize them.
     }
@@ -1752,6 +2010,7 @@ def main():
             "use_sp": True, "optimize_cost": False, "qc_level": "Good",
             "fine_zone": "Zone II", "material_props": default_material_props,
             "optimize_for": "CO₂ Emissions", "calibration_kwargs": {},
+            "enable_hpc": False, # Default to off in chat mode
             **chat_inputs
         }
         
