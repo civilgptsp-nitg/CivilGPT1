@@ -26,7 +26,7 @@ LAB_FILE = "lab_processed_mgrades_only.xlsx"
 MIX_FILE = "concrete_mix_design_data_cleaned_standardized.xlsx"
 
 class CONSTANTS:
-    GRADE_STRENGTH = {"M10": 10, "M15": 15, "M20": 20, "M25": 25, "M30": 30, "M35": 35, "M40": 40, "M45": 45, "M50": 50}
+    GRADE_STRENGTH = {"M10": 10, "M15": 15, "M20": 20, "M25": 25, "M30": 30, "M35": 35, "M40": 40, "M45": 45, "M50": 50, "M60": 60, "M70": 70, "M80": 80, "M90": 90, "M100": 100}
     EXPOSURE_WB_LIMITS = {"Mild": 0.60, "Moderate": 0.55, "Severe": 0.50, "Very Severe": 0.45, "Marine": 0.40}
     EXPOSURE_MIN_CEMENT = {"Mild": 300, "Moderate": 300, "Severe": 320, "Very Severe": 340, "Marine": 360}
     EXPOSURE_MIN_GRADE = {"Mild": "M20", "Moderate": "M25", "Severe": "M30", "Very Severe": "M35", "Marine": "M40"}
@@ -37,7 +37,9 @@ class CONSTANTS:
     BINDER_RANGES = {
         "M10": (220, 320), "M15": (250, 350), "M20": (300, 400),
         "M25": (320, 420), "M30": (340, 450), "M35": (360, 480),
-        "M40": (380, 500), "M45": (400, 520), "M50": (420, 540)
+        "M40": (380, 500), "M45": (400, 520), "M50": (420, 540),
+        "M60": (460, 700), "M70": (500, 760), "M80": (540, 820),
+        "M90": (580, 880), "M100": (620, 940)
     }
     COARSE_AGG_FRAC_BY_ZONE = {
         10: {"Zone I": 0.50, "Zone II": 0.48, "Zone III": 0.46, "Zone IV": 0.44},
@@ -46,15 +48,15 @@ class CONSTANTS:
         40: {"Zone I": 0.71, "Zone II": 0.69, "Zone III": 0.67, "Zone IV": 0.65}
     }
     FINE_AGG_ZONE_LIMITS = {
-        "Zone I":     {"10.0": (100,100),"4.75": (90,100),"2.36": (60,95),"1.18": (30,70),"0.600": (15,34),"0.300": (5,20),"0.150": (0,10)},
-        "Zone II":    {"10.0": (100,100),"4.75": (90,100),"2.36": (75,100),"1.18": (55,90),"0.600": (35,59),"0.300": (8,30),"0.150": (0,10)},
+        "Zone I": {"10.0": (100,100),"4.75": (90,100),"2.36": (60,95),"1.18": (30,70),"0.600": (15,34),"0.300": (5,20),"0.150": (0,10)},
+        "Zone II": {"10.0": (100,100),"4.75": (90,100),"2.36": (75,100),"1.18": (55,90),"0.600": (35,59),"0.300": (8,30),"0.150": (0,10)},
         "Zone III": {"10.0": (100,100),"4.75": (90,100),"2.36": (85,100),"1.18": (75,90),"0.600": (60,79),"0.300": (12,40),"0.150": (0,10)},
-        "Zone IV":    {"10.0": (95,100),"4.75": (95,100),"2.36": (95,100),"1.18": (90,100),"0.600": (80,100),"0.300": (15,50),"0.150": (0,15)},
+        "Zone IV": {"10.0": (95,100),"4.75": (95,100),"2.36": (95,100),"1.18": (90,100),"0.600": (80,100),"0.300": (15,50),"0.150": (0,15)},
     }
     COARSE_LIMITS = {
         10: {"20.0": (100,100), "10.0": (85,100),    "4.75": (0,20)},
-        20: {"40.0": (95,100),  "20.0": (95,100),  "10.0": (25,55), "4.75": (0,10)},
-        40: {"80.0": (95,100),  "40.0": (95,100),  "20.0": (30,70), "10.0": (0,15)}
+        20: {"40.0": (95,100), "20.0": (95,100), "10.0": (25,55), "4.75": (0,10)},
+        40: {"80.0": (95,100), "40.0": (95,100), "20.0": (30,70), "10.0": (0,15)}
     }
     EMISSIONS_COL_MAP = {
         "material": "Material", "co2_factor_kg_co2_per_kg": "CO2_Factor(kg_CO2_per_kg)",
@@ -130,9 +132,11 @@ def load_default_excel(file_name):
     ]
     for p in paths_to_try:
         if os.path.exists(p):
-            try: return pd.read_excel(p)
+            try:
+                return pd.read_excel(p)
             except Exception:
-                try: return pd.read_excel(p, engine="openpyxl")
+                try:
+                    return pd.read_excel(p, engine="openpyxl")
                 except Exception as e:
                     st.warning(f"Failed to read {p}: {e}")
     return None
@@ -142,14 +146,15 @@ mix_df = load_default_excel(MIX_FILE)
 
 def _normalize_header(header):
     s = str(header).strip().lower()
-    s = re.sub(r'[ \-/\.\(\)]+', '_', s)
+    s = re.sub(r'[\-/\.\(\)]+', '_', s)
     s = re.sub(r'[^a-z0-9_]+', '', s)
     s = re.sub(r'_+', '_', s)
     return s.strip('_')
 
 @lru_cache(maxsize=128)
 def _normalize_material_value(s: str) -> str:
-    if s is None: return ""
+    if s is None:
+        return ""
     s = str(s).strip().lower()
     s = re.sub(r'\b(\d+mm)\b', r'\1', s)
     s = re.sub(r'[^a-z0-9\s]', ' ', s)
@@ -164,7 +169,8 @@ def _normalize_material_value(s: str) -> str:
         "opc 33": "opc 33", "opc 43": "opc 43", "opc 53": "opc 53", "ppc": "ppc",
         "fly ash": CONSTANTS.NORM_FLYASH, "ggbs": CONSTANTS.NORM_GGBS, "water": CONSTANTS.NORM_WATER,
     }
-    if s in synonyms: return synonyms[s]
+    if s in synonyms:
+        return synonyms[s]
     cand = get_close_matches(s, list(synonyms.keys()), n=1, cutoff=0.78)
     if cand: return synonyms[cand[0]]
     key2 = re.sub(r'^\d+\s*', '', s)
@@ -278,7 +284,8 @@ def load_data(materials_file=None, emissions_file=None, cost_file=None):
         paths_to_try = [os.path.join(SCRIPT_DIR, name) for name in default_names]
         for p in paths_to_try:
             if os.path.exists(p):
-                try: return pd.read_csv(p)
+                try:
+                    return pd.read_csv(p)
                 except Exception as e: st.warning(f"Could not read {p}: {e}")
         return None
 
@@ -300,7 +307,7 @@ def load_data(materials_file=None, emissions_file=None, cost_file=None):
     if emissions.empty or "Material" not in emissions.columns or "CO2_Factor(kg_CO2_per_kg)" not in emissions.columns:
         st.warning("⚠️ Could not load 'emission_factors.csv'. CO2 calculations will be zero.")
         emissions = pd.DataFrame(columns=list(dict.fromkeys(CONSTANTS.EMISSIONS_COL_MAP.values())))
-        	
+                                                                                                     
     costs = _normalize_columns(costs, CONSTANTS.COSTS_COL_MAP)
     if "Material" in costs.columns:
         costs["Material"] = costs["Material"].astype(str).str.strip()
@@ -324,7 +331,7 @@ def _merge_and_warn(main_df: pd.DataFrame, factor_df: pd.DataFrame, factor_col: 
         missing_items = [m for m in missing_rows["Material"].tolist() if m and str(m).strip()]
         
         if missing_items:
-            if warning_session_key not in st.session_state:  
+            if warning_session_key not in st.session_state: 
                 st.session_state[warning_session_key] = set()
             new_missing = set(missing_items) - st.session_state[warning_session_key]
             if new_missing:
@@ -339,7 +346,8 @@ def _merge_and_warn(main_df: pd.DataFrame, factor_df: pd.DataFrame, factor_col: 
         return main_df
 
 def pareto_front(df, x_col="cost", y_col="co2"):
-    if df.empty: return pd.DataFrame(columns=df.columns)
+    if df.empty:
+        return pd.DataFrame(columns=df.columns)
     sorted_df = df.sort_values(by=[x_col, y_col], ascending=[True, True])
     pareto_points = []
     last_y = float('inf')
@@ -401,7 +409,8 @@ def run_lab_calibration(lab_df):
                 "Error (MPa)": predicted_strength - actual_strength
             })
         except (KeyError, ValueError, TypeError): pass
-    if not results: return None, {}
+    if not results:
+        return None, {}
     results_df = pd.DataFrame(results)
     mae = results_df["Error (MPa)"].abs().mean()
     rmse = np.sqrt((results_df["Error (MPa)"].clip(lower=0) ** 2).mean()) # Cliped lower to 0 for robustness
@@ -413,8 +422,9 @@ def run_lab_calibration(lab_df):
 def simple_parse(text: str) -> dict:
     """Regex-based fallback parser."""
     result = {}
-    grade_match = re.search(r"\bM\s*(10|15|20|25|30|35|40|45|50)\b", text, re.IGNORECASE)
-    if grade_match: result["grade"] = "M" + grade_match.group(1)
+    grade_match = re.search(r"\bM\s*([0-9]{1,3})\b", text, re.IGNORECASE)
+    if grade_match:
+        result["grade"] = "M" + grade_match.group(1)
     
     if re.search("Marine", text, re.IGNORECASE):
         result["exposure"] = "Marine"
@@ -472,8 +482,10 @@ def parse_user_prompt_llm(prompt_text: str) -> dict:
     - "optimize_for": (String) Must be "CO2" or "Cost".
     - "use_superplasticizer": (Boolean)
 
-    User Prompt: "I need M30 for severe marine exposure, 20mm agg, 100 slump, use PPC for a column"
-    JSON: {{"grade": "M30", "exposure": "Marine", "nom_max": 20, "target_slump": 100, "cement_type": "PPC", "purpose": "Column"}}
+    User Prompt:
+"I need M30 for severe marine exposure, 20mm agg, 100 slump, use PPC for a column"
+    JSON:
+{{"grade": "M30", "exposure": "Marine", "nom_max": 20, "target_slump": 100, "cement_type": "PPC", "purpose": "Column"}}
     """
     
     try:
@@ -587,16 +599,23 @@ def compute_aggregates_vectorized(binder_series, water_scalar, sp_series, coarse
 
 def compliance_checks(mix_df, meta, exposure):
     checks = {}
-    try: checks["W/B ≤ exposure limit"] = float(meta["w_b"]) <= CONSTANTS.EXPOSURE_WB_LIMITS[exposure]
-    except: checks["W/B ≤ exposure limit"] = False
-    try: checks["Min cementitious met"] = float(meta["cementitious"]) >= float(CONSTANTS.EXPOSURE_MIN_CEMENT[exposure])
-    except: checks["Min cementitious met"] = False
-    try: checks["SCM ≤ 50%"] = float(meta.get("scm_total_frac", 0.0)) <= 0.50
-    except: checks["SCM ≤ 50%"] = False
+    try:
+        checks["W/B ≤ exposure limit"] = float(meta["w_b"]) <= CONSTANTS.EXPOSURE_WB_LIMITS[exposure]
+    except:
+        checks["W/B ≤ exposure limit"] = False
+    try:
+        checks["Min cementitious met"] = float(meta["cementitious"]) >= float(CONSTANTS.EXPOSURE_MIN_CEMENT[exposure])
+    except:
+        checks["Min cementitious met"] = False
+    try:
+        checks["SCM ≤ 50%"] = float(meta.get("scm_total_frac", 0.0)) <= 0.50
+    except:
+        checks["SCM ≤ 50%"] = False
     try:
         total_mass = float(mix_df["Quantity (kg/m3)"].sum())
         checks["Unit weight 2200–2600 kg/m³"] = 2200.0 <= total_mass <= 2600.0
-    except: checks["Unit weight 2200–2600 kg/m³"] = False
+    except:
+        checks["Unit weight 2200–2600 kg/m³"] = False
     derived = {
         "w/b used": round(float(meta.get("w_b", 0.0)), 3),
         "cementitious (kg/m³)": round(float(meta.get("cementitious", 0.0)), 1),
@@ -624,7 +643,8 @@ def sanity_check_mix(meta, df):
         cement, water, fine = float(meta.get("cement", 0)), float(meta.get("water_target", 0)), float(meta.get("fine", 0))
         coarse, sp = float(meta.get("coarse", 0)), float(meta.get("sp", 0))
         unit_wt = float(df["Quantity (kg/m3)"].sum())
-    except Exception: return ["Insufficient data to run sanity checks."]
+    except Exception:
+        return ["Insufficient data to run sanity checks."]
     if cement > 500: warnings.append(f"High cement content ({cement:.1f} kg/m³). Increases cost, shrinkage, and CO₂.")
     if not 140 <= water <= 220: warnings.append(f"Water content ({water:.1f} kg/m³) is outside the typical range of 140-220 kg/m³.")
     if not 500 <= fine <= 900: warnings.append(f"Fine aggregate quantity ({fine:.1f} kg/m³) is unusual.")
@@ -644,21 +664,25 @@ def get_compliance_reasons(mix_df, meta, exposure):
     try:
         limit, used = CONSTANTS.EXPOSURE_WB_LIMITS[exposure], float(meta["w_b"])
         if used > limit: reasons.append(f"Failed W/B ratio limit ({used:.3f} > {limit:.2f})")
-    except: reasons.append("Failed W/B ratio check (parsing error)")
+    except:
+        reasons.append("Failed W/B ratio check (parsing error)")
     try:
         limit, used = float(CONSTANTS.EXPOSURE_MIN_CEMENT[exposure]), float(meta["cementitious"])
         if used < limit: reasons.append(f"Cementitious below minimum ({used:.1f} kg/m³ < {limit:.1f} kg/m³)")
-    except: reasons.append("Failed min. cementitious check (parsing error)")
+    except:
+        reasons.append("Failed min. cementitious check (parsing error)")
     try:
         limit, used = 0.50, float(meta.get("scm_total_frac", 0.0))
         if used > limit: reasons.append(f"SCM fraction exceeds limit ({used*100:.0f}% > {limit*100:.0f}%)")
-    except: reasons.append("Failed SCM fraction check (parsing error)")
+    except:
+        reasons.append("Failed SCM fraction check (parsing error)")
     try:
         min_limit, max_limit = 2200.0, 2600.0
         total_mass = float(mix_df["Quantity (kg/m3)"].sum())
         if not (min_limit <= total_mass <= max_limit):
             reasons.append(f"Unit weight outside range ({total_mass:.1f} kg/m³ not in {min_limit:.0f}-{max_limit:.0f} kg/m³)")
-    except: reasons.append("Failed unit weight check (parsing error)")
+    except:
+        reasons.append("Failed unit weight check (parsing error)")
     feasible = len(reasons) == 0
     return feasible, "All IS-code checks passed." if feasible else "; ".join(reasons)
 
@@ -755,15 +779,16 @@ def _get_material_factors(materials_list, emissions_df, costs_df):
     return final_co2, final_cost
 
 def generate_mix(grade, exposure, nom_max, target_slump, agg_shape, 
-                 fine_zone, emissions, costs, cement_choice, material_props, 
-                 use_sp=True, sp_reduction=0.18, optimize_cost=False, 
-                 wb_min=0.35, wb_steps=6, max_flyash_frac=0.3, max_ggbs_frac=0.5, 
-                 scm_step=0.1, fine_fraction_override=None,
-                 purpose='General', purpose_profile=None, purpose_weights=None,
-                 enable_purpose_optimization=False, st_progress=None):
+                fine_zone, emissions, costs, cement_choice, material_props, 
+                use_sp=True, sp_reduction=0.18, optimize_cost=False, 
+                wb_min=0.35, wb_steps=6, max_flyash_frac=0.3, max_ggbs_frac=0.5, 
+                scm_step=0.1, fine_fraction_override=None,
+                purpose='General', purpose_profile=None, purpose_weights=None,
+                enable_purpose_optimization=False, st_progress=None):
 
     # --- 1. Setup Parameters ---
-    if st_progress: st_progress.progress(0.0, text="Initializing parameters...")
+    if st_progress:
+        st_progress.progress(0.0, text="Initializing parameters...")
     
     w_b_limit = float(CONSTANTS.EXPOSURE_WB_LIMITS[exposure])
     min_cem_exp = float(CONSTANTS.EXPOSURE_MIN_CEMENT[exposure])
@@ -773,12 +798,13 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     
     if 'warned_emissions' in st.session_state: st.session_state.warned_emissions.clear()
     if 'warned_costs' in st.session_state: st.session_state.warned_costs.clear()
-                        
+                       
     if purpose_profile is None: purpose_profile = CONSTANTS.PURPOSE_PROFILES['General']
     if purpose_weights is None: purpose_weights = CONSTANTS.PURPOSE_PROFILES['General']['weights']
 
     # --- 2. Pre-compute Cost/CO2 Factors (Vectorization Prep) ---
-    if st_progress: st_progress.progress(0.05, text="Pre-computing cost/CO2 factors...")
+    if st_progress:
+        st_progress.progress(0.05, text="Pre-computing cost/CO2 factors...")
     
     norm_cement_choice = _normalize_material_value(cement_choice)
     materials_to_calc = [
@@ -789,7 +815,8 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     co2_factors, cost_factors = _get_material_factors(materials_to_calc, emissions, costs)
 
     # --- 3. Create Parameter Grid ---
-    if st_progress: st_progress.progress(0.1, text="Creating optimization grid...")
+    if st_progress:
+        st_progress.progress(0.1, text="Creating optimization grid...")
     
     wb_values = np.linspace(float(wb_min), float(w_b_limit), int(wb_steps))
     flyash_options = np.arange(0.0, max_flyash_frac + 1e-9, scm_step)
@@ -803,7 +830,8 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
         return None, None, [] # No feasible SCM combinations
 
     # --- 4. Vectorized Mix Calculations ---
-    if st_progress: st_progress.progress(0.2, text="Calculating binder properties...")
+    if st_progress:
+        st_progress.progress(0.2, text="Calculating binder properties...")
     
     grid_df['binder_for_strength'] = target_water / grid_df['wb_input']
     
@@ -821,7 +849,8 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     grid_df['ggbs'] = grid_df['binder'] * grid_df['ggbs_frac']
     grid_df['sp'] = (0.01 * grid_df['binder']) if use_sp else 0.0
     
-    if st_progress: st_progress.progress(0.3, text="Calculating aggregate proportions...")
+    if st_progress:
+        st_progress.progress(0.3, text="Calculating aggregate proportions...")
     
     if fine_fraction_override is not None and fine_fraction_override > 0.3:
         grid_df['coarse_agg_fraction'] = 1.0 - fine_fraction_override
@@ -843,7 +872,8 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     grid_df['water_final'] = (target_water - (water_delta_fa_series + water_delta_ca_series)).clip(lower=5.0)
 
     # --- 5. Vectorized Cost & CO2 Calculations ---
-    if st_progress: st_progress.progress(0.5, text="Calculating cost and CO2...")
+    if st_progress:
+        st_progress.progress(0.5, text="Calculating cost and CO2...")
     
     grid_df['co2_total'] = (
         grid_df['cement'] * co2_factors.get(norm_cement_choice, 0.0) +
@@ -866,7 +896,8 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     )
 
     # --- 6. Vectorized Feasibility & Purpose Scoring ---
-    if st_progress: st_progress.progress(0.7, text="Checking compliance and purpose-fit...")
+    if st_progress:
+        st_progress.progress(0.7, text="Checking compliance and purpose-fit...")
     
     grid_df['total_mass'] = (
         grid_df['cement'] + grid_df['flyash'] + grid_df['ggbs'] + 
@@ -889,7 +920,8 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     grid_df['purpose'] = purpose
 
     # --- 7. Candidate Selection ---
-    if st_progress: st_progress.progress(0.8, text="Finding best mix design...")
+    if st_progress:
+        st_progress.progress(0.8, text="Finding best mix design...")
     
     feasible_candidates_df = grid_df[grid_df['feasible']].copy()
     
@@ -921,7 +953,8 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     best_meta_series = feasible_candidates_df.loc[best_idx]
 
     # --- 9. Re-hydrate Final Mix & Trace ---
-    if st_progress: st_progress.progress(0.9, text="Generating final mix report...")
+    if st_progress:
+        st_progress.progress(0.9, text="Generating final mix report...")
     
     best_mix_dict = {
         cement_choice: best_meta_series['cement'],
@@ -957,9 +990,9 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     return best_df, best_meta, trace_df.to_dict('records')
 
 def generate_baseline(grade, exposure, nom_max, target_slump, agg_shape, 
-                      fine_zone, emissions, costs, cement_choice, material_props, 
-                      use_sp=True, sp_reduction=0.18,
-                      purpose='General', purpose_profile=None):
+                     fine_zone, emissions, costs, cement_choice, material_props, 
+                     use_sp=True, sp_reduction=0.18,
+                     purpose='General', purpose_profile=None):
     
     w_b_limit = float(CONSTANTS.EXPOSURE_WB_LIMITS[exposure])
     min_cem_exp = float(CONSTANTS.EXPOSURE_MIN_CEMENT[exposure])
@@ -1080,7 +1113,8 @@ def display_mix_details(title, df, meta, exposure):
     st.dataframe(df.style.format({
         "Quantity (kg/m3)": "{:.2f}", "CO2_Factor(kg_CO2_per_kg)": "{:.3f}",
         "CO2_Emissions (kg/m3)": "{:.2f}", "Cost(₹/kg)": "₹{:.2f}", "Cost (₹/m3)": "₹{:.2f}"
-    }), use_container_width=True)
+    }),
+    use_container_width=True)
 
     st.subheader("Compliance & Sanity Checks (IS 10262 & IS 456)")
     is_feasible, fail_reasons, warnings, derived, checks_dict = check_feasibility(df, meta, exposure)
@@ -1095,7 +1129,8 @@ def display_mix_details(title, df, meta, exposure):
         with st.expander(f"Show Estimated Purpose-Specific Metrics ({purpose})"):
             st.json(meta["purpose_metrics"])
     with st.expander("Show detailed calculation parameters"):
-        if "purpose_metrics" in derived: derived.pop("purpose_metrics", None)
+        if "purpose_metrics" in derived:
+            derived.pop("purpose_metrics", None)
         st.json(derived)
 
 def display_calculation_walkthrough(meta):
@@ -1324,7 +1359,6 @@ def run_chat_interface(purpose_profiles_data: dict):
             # 6. Call st.rerun() to force immediate UI update
             st.rerun()
 
-
         st.button(
             "📊 Open Full Mix Report & Switch to Manual Mode",  
             use_container_width=True,  
@@ -1389,9 +1423,16 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
         
         # --- 2a. CORE MIX PARAMETERS ---
         st.subheader("Core Mix Requirements")
+        
+        enable_hpc = st.toggle("Enable HPC (M60–M100)", value=False, key="enable_hpc_toggle",
+                       help="When enabled, adds high-performance concrete grades (M60–M100) to the grade options.")
+        
         c1, c2, c3, c4 = st.columns(4)
         with c1:
-            grade = st.selectbox("Concrete Grade", list(CONSTANTS.GRADE_STRENGTH.keys()), index=4, help="Target characteristic compressive strength at 28 days.", key="grade")
+            grade_list = list(CONSTANTS.GRADE_STRENGTH.keys())
+            if not st.session_state.get("enable_hpc_toggle", False):
+                grade_list = [g for g in grade_list if int(g[1:]) <= 50]
+            grade = st.selectbox("Concrete Grade", grade_list, index=grade_list.index("M30"), key="grade")
         with c2:
             exposure = st.selectbox("Exposure Condition", list(CONSTANTS.EXPOSURE_WB_LIMITS.keys()), index=2, help="Determines durability requirements like min. cement content and max. water-binder ratio as per IS 456.", key="exposure")
         with c3:
@@ -1462,8 +1503,8 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                     purpose_weights = {"w_co2": w_co2 / total_w, "w_cost": w_cost / total_w, "w_purpose": w_purpose / total_w}
                     st.caption(f"Normalized: CO₂ {purpose_weights['w_co2']:.1%}, Cost {purpose_weights['w_cost']:.1%}, Purpose {purpose_weights['w_purpose']:.1%}")
         elif enable_purpose_optimization and purpose == 'General':
-              st.info("Purpose 'General' uses single-objective optimization (CO₂ or Cost).")
-              enable_purpose_optimization = False
+             st.info("Purpose 'General' uses single-objective optimization (CO₂ or Cost).")
+             enable_purpose_optimization = False
 
         st.markdown("---")
         # --- 2b. MATERIAL PROPERTIES (MOVED FROM SIDEBAR) ---
@@ -1561,7 +1602,8 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
     calib_max_ggbs_frac = st.session_state.get("calib_max_ggbs_frac", 0.5) if enable_calibration_overrides else 0.5
     calib_scm_step = st.session_state.get("calib_scm_step", 0.1) if enable_calibration_overrides else 0.1
     calib_fine_fraction = st.session_state.get("calib_fine_fraction", 0.40) if enable_calibration_overrides else None
-    if calib_fine_fraction == 0.40 and not enable_calibration_overrides: calib_fine_fraction = None
+    if calib_fine_fraction == 0.40 and not enable_calibration_overrides:
+        calib_fine_fraction = None
     
     # Recalculate purpose weights from sliders if needed, using safe .get
     purpose_weights = purpose_profiles_data['General']['weights']
@@ -2112,11 +2154,11 @@ def main():
         
         # Move the LLM parser toggle into the sidebar if we're in manual mode, for easy access
         if not chat_mode and llm_is_ready:
-              st.markdown("---")
-              st.checkbox(
-                  "Use Groq LLM Parser for Text Prompt", 
-                  value=False, key="use_llm_parser",
-                  help="Use the LLM to automatically extract parameters from the text area above."
+             st.markdown("---")
+             st.checkbox(
+                 "Use Groq LLM Parser for Text Prompt", 
+                 value=False, key="use_llm_parser",
+                 help="Use the LLM to automatically extract parameters from the text area above."
               )
 
 
