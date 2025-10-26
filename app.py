@@ -75,14 +75,137 @@ class CONSTANTS:
         "moisturecontent": "MoistureContent", "moisture_content": "MoistureContent",
         "waterabsorption": "WaterAbsorption", "water_absorption": "WaterAbsorption"
     }
+    
+    # ENHANCED PURPOSE PROFILES WITH DETAILED CONSTRAINTS
     PURPOSE_PROFILES = {
-        "General": {"description": "A balanced, default mix. Follows IS code minimums without specific optimization bias.", "wb_limit": 1.0, "scm_limit": 0.5, "min_binder": 0.0, "weights": {"co2": 0.4, "cost": 0.4, "purpose": 0.2}},
-        "Slab": {"description": "Prioritizes workability (slump) and cost-effectiveness. Strength is often not the primary driver.", "wb_limit": 0.55, "scm_limit": 0.5, "min_binder": 300, "weights": {"co2": 0.3, "cost": 0.5, "purpose": 0.2}},
-        "Beam": {"description": "Prioritizes strength (modulus) and durability. Often heavily reinforced.", "wb_limit": 0.50, "scm_limit": 0.4, "min_binder": 320, "weights": {"co2": 0.4, "cost": 0.2, "purpose": 0.4}},
-        "Column": {"description": "Prioritizes high compressive strength and durability. Congestion is common.", "wb_limit": 0.45, "scm_limit": 0.35, "min_binder": 340, "weights": {"co2": 0.3, "cost": 0.2, "purpose": 0.5}},
-        "Pavement": {"description": "Prioritizes durability, flexural strength (fatigue), and abrasion resistance. Cost is a major factor.", "wb_limit": 0.45, "scm_limit": 0.4, "min_binder": 340, "weights": {"co2": 0.3, "cost": 0.4, "purpose": 0.3}},
-        "Precast": {"description": "Prioritizes high early strength (for form stripping), surface finish, and cost (reproducibility).", "wb_limit": 0.45, "scm_limit": 0.3, "min_binder": 360, "weights": {"co2": 0.2, "cost": 0.5, "purpose": 0.3}},
-        "RPC/HPC": {"description": "High-Performance Concrete with silica fume, very low w/b ratios, and high strength (>M60).", "wb_limit": 0.35, "scm_limit": 0.25, "min_binder": 450, "weights": {"co2": 0.4, "cost": 0.1, "purpose": 0.5}}
+        "General": {
+            "description": "A balanced, default mix. Follows IS code minimums without specific optimization bias.",
+            "wb_limit": 1.0, 
+            "scm_limit": 0.5, 
+            "min_binder": 0.0,
+            "max_binder": 600.0,
+            "target_slump_range": (50, 150),
+            "min_fines_content": 300,
+            "max_sp_frac": 0.03,
+            "preferred_scm_types": ["flyash", "ggbs"],
+            "strength_priority": "medium",
+            "durability_priority": "medium",
+            "workability_priority": "medium",
+            "cost_priority": "medium",
+            "sustainability_priority": "medium",
+            "weights": {"co2": 0.4, "cost": 0.4, "purpose": 0.2}
+        },
+        "Slab": {
+            "description": "Prioritizes workability (slump) and cost-effectiveness. Strength is often not the primary driver.",
+            "wb_limit": 0.55, 
+            "scm_limit": 0.5, 
+            "min_binder": 300,
+            "max_binder": 450,
+            "target_slump_range": (75, 150),
+            "min_fines_content": 350,
+            "max_sp_frac": 0.025,
+            "preferred_scm_types": ["flyash"],
+            "strength_priority": "low",
+            "durability_priority": "medium",
+            "workability_priority": "high",
+            "cost_priority": "high",
+            "sustainability_priority": "medium",
+            "weights": {"co2": 0.3, "cost": 0.5, "purpose": 0.2}
+        },
+        "Beam": {
+            "description": "Prioritizes strength (modulus) and durability. Often heavily reinforced.",
+            "wb_limit": 0.50, 
+            "scm_limit": 0.4, 
+            "min_binder": 320,
+            "max_binder": 500,
+            "target_slump_range": (75, 125),
+            "min_fines_content": 380,
+            "max_sp_frac": 0.03,
+            "preferred_scm_types": ["ggbs", "flyash"],
+            "strength_priority": "high",
+            "durability_priority": "high",
+            "workability_priority": "medium",
+            "cost_priority": "low",
+            "sustainability_priority": "medium",
+            "weights": {"co2": 0.4, "cost": 0.2, "purpose": 0.4}
+        },
+        "Column": {
+            "description": "Prioritizes high compressive strength and durability. Congestion is common.",
+            "wb_limit": 0.45, 
+            "scm_limit": 0.35, 
+            "min_binder": 340,
+            "max_binder": 550,
+            "target_slump_range": (100, 175),
+            "min_fines_content": 400,
+            "max_sp_frac": 0.035,
+            "preferred_scm_types": ["ggbs"],
+            "strength_priority": "very_high",
+            "durability_priority": "very_high",
+            "workability_priority": "high",
+            "cost_priority": "low",
+            "sustainability_priority": "medium",
+            "weights": {"co2": 0.3, "cost": 0.2, "purpose": 0.5}
+        },
+        "Pavement": {
+            "description": "Prioritizes durability, flexural strength (fatigue), and abrasion resistance. Cost is a major factor.",
+            "wb_limit": 0.45, 
+            "scm_limit": 0.4, 
+            "min_binder": 340,
+            "max_binder": 480,
+            "target_slump_range": (25, 75),
+            "min_fines_content": 370,
+            "max_sp_frac": 0.02,
+            "preferred_scm_types": ["flyash"],
+            "strength_priority": "high",
+            "durability_priority": "very_high",
+            "workability_priority": "low",
+            "cost_priority": "high",
+            "sustainability_priority": "medium",
+            "weights": {"co2": 0.3, "cost": 0.4, "purpose": 0.3}
+        },
+        "Precast": {
+            "description": "Prioritizes high early strength (for form stripping), surface finish, and cost (reproducibility).",
+            "wb_limit": 0.45, 
+            "scm_limit": 0.3, 
+            "min_binder": 360,
+            "max_binder": 520,
+            "target_slump_range": (50, 100),
+            "min_fines_content": 390,
+            "max_sp_frac": 0.03,
+            "preferred_scm_types": [],
+            "strength_priority": "high",
+            "durability_priority": "medium",
+            "workability_priority": "medium",
+            "cost_priority": "high",
+            "sustainability_priority": "low",
+            "weights": {"co2": 0.2, "cost": 0.5, "purpose": 0.3}
+        },
+        "RPC/HPC": {
+            "description": "High-Performance Concrete with silica fume, very low w/b ratios, and high strength (>M60).",
+            "wb_limit": 0.35, 
+            "scm_limit": 0.25, 
+            "min_binder": 450,
+            "max_binder": 800,
+            "target_slump_range": (200, 250),
+            "min_fines_content": 450,
+            "max_sp_frac": 0.05,
+            "preferred_scm_types": ["silica_fume", "ggbs"],
+            "strength_priority": "very_high",
+            "durability_priority": "very_high",
+            "workability_priority": "high",
+            "cost_priority": "very_low",
+            "sustainability_priority": "low",
+            "weights": {"co2": 0.4, "cost": 0.1, "purpose": 0.5}
+        }
+    }
+    
+    # Priority weight mappings for enhanced metrics
+    PRIORITY_WEIGHTS = {
+        "very_low": 0.2,
+        "low": 0.4,
+        "medium": 0.6,
+        "high": 0.8,
+        "very_high": 1.0
     }
     
     # HPC Options
@@ -259,20 +382,27 @@ def check_hpc_pumpability(fines_content: float, sp_content: float, binder_conten
     return fines_ok and sp_ok, fines_ok, sp_ok
 
 def evaluate_purpose_specific_metrics(candidate_meta: dict, purpose: str) -> dict:
-    """Enhanced with HPC-aware metrics"""
+    """ENHANCED purpose-specific metrics with comprehensive evaluation"""
     try:
+        purpose_profile = CONSTANTS.PURPOSE_PROFILES.get(purpose, CONSTANTS.PURPOSE_PROFILES["General"])
+        
         fck_target = float(candidate_meta.get('fck_target', 30.0))
         wb = float(candidate_meta.get('w_b', 0.5))
         binder = float(candidate_meta.get('cementitious', 350.0))
         water = float(candidate_meta.get('water_target', 180.0))
         sf_frac = float(candidate_meta.get('sf_frac', 0.0))
+        slump = float(candidate_meta.get('slump', 100.0))
+        fines_content = float(candidate_meta.get('fine', 0)) + binder * sf_frac
+        sp_content = float(candidate_meta.get('sp', 0.0))
+        sp_frac = sp_content / binder if binder > 0 else 0
         
-        # Enhanced modulus calculation for HPC
+        # Enhanced modulus calculation with purpose-specific adjustments
         if sf_frac > 0.05:  # Significant silica fume content
-            modulus_proxy = 5500 * np.sqrt(fck_target)  # HPC has higher modulus
+            modulus_proxy = 5700 * np.sqrt(fck_target)  # HPC has higher modulus
         else:
             modulus_proxy = 5000 * np.sqrt(fck_target)
             
+        # Enhanced shrinkage risk with purpose-specific sensitivity
         shrinkage_risk_index = (binder * water) / 10000.0
         
         # Enhanced fatigue calculation for pavements
@@ -284,9 +414,48 @@ def evaluate_purpose_specific_metrics(candidate_meta: dict, purpose: str) -> dic
         hpc_strength_index = fck_target / (wb * 100) if wb > 0 else 0
         
         # Pumpability assessment for HPC
-        fines_content = candidate_meta.get('fine', 0) + binder * sf_frac
-        sp_content = candidate_meta.get('sp', 0)
         pumpable, fines_ok, sp_ok = check_hpc_pumpability(fines_content, sp_content, binder)
+        
+        # NEW: Workability score based on slump and fines content
+        target_slump_min, target_slump_max = purpose_profile.get('target_slump_range', (50, 150))
+        slump_deviation = max(0, target_slump_min - slump, slump - target_slump_max)
+        workability_score = max(0, 100 - slump_deviation * 2)
+        
+        # NEW: Strength efficiency metric
+        strength_efficiency = fck_target / (binder / 100) if binder > 0 else 0
+        
+        # NEW: Durability index based on w/b ratio and binder content
+        durability_index = (0.6 - wb) * 100 + min(50, binder - 300) * 0.1
+        
+        # NEW: Cost efficiency metric
+        cost_per_mpa = candidate_meta.get('cost_total', 0) / fck_target if fck_target > 0 else 0
+        
+        # NEW: Sustainability score
+        co2_per_mpa = candidate_meta.get('co2_total', 0) / fck_target if fck_target > 0 else 0
+        sustainability_score = max(0, 100 - co2_per_mpa * 2)
+        
+        # NEW: Purpose-specific compliance score
+        compliance_score = 100
+        # Check w/b compliance
+        if wb > purpose_profile.get('wb_limit', 1.0):
+            compliance_score -= (wb - purpose_profile['wb_limit']) * 100
+        # Check SCM compliance
+        scm_total = candidate_meta.get('scm_total_frac', 0.0)
+        if scm_total > purpose_profile.get('scm_limit', 0.5):
+            compliance_score -= (scm_total - purpose_profile['scm_limit']) * 50
+        # Check binder range compliance
+        if binder < purpose_profile.get('min_binder', 0.0):
+            compliance_score -= (purpose_profile['min_binder'] - binder) * 0.5
+        if binder > purpose_profile.get('max_binder', 600.0):
+            compliance_score -= (binder - purpose_profile['max_binder']) * 0.2
+        # Check fines content compliance
+        if fines_content < purpose_profile.get('min_fines_content', 300):
+            compliance_score -= (purpose_profile['min_fines_content'] - fines_content) * 0.1
+        # Check SP fraction compliance
+        if sp_frac > purpose_profile.get('max_sp_frac', 0.03):
+            compliance_score -= (sp_frac - purpose_profile['max_sp_frac']) * 500
+            
+        compliance_score = max(0, compliance_score)
         
         return {
             "estimated_modulus_proxy (MPa)": round(modulus_proxy, 0),
@@ -295,72 +464,221 @@ def evaluate_purpose_specific_metrics(candidate_meta: dict, purpose: str) -> dic
             "hpc_strength_efficiency": round(hpc_strength_index, 2) if sf_frac > 0 else None,
             "pumpability_assessment": "Good" if pumpable else "Marginal",
             "fines_content_ok": fines_ok,
-            "sp_dosage_ok": sp_ok
+            "sp_dosage_ok": sp_ok,
+            "workability_score": round(workability_score, 1),
+            "strength_efficiency": round(strength_efficiency, 2),
+            "durability_index": round(durability_index, 1),
+            "cost_efficiency": round(cost_per_mpa, 2),
+            "sustainability_score": round(sustainability_score, 1),
+            "purpose_compliance_score": round(compliance_score, 1)
         }
-    except Exception:
-        return {"estimated_modulus_proxy (MPa)": None, "shrinkage_risk_index": None, "pavement_fatigue_proxy": None}
+    except Exception as e:
+        return {
+            "estimated_modulus_proxy (MPa)": None, 
+            "shrinkage_risk_index": None, 
+            "pavement_fatigue_proxy": None,
+            "error": str(e)
+        }
 
 def compute_purpose_penalty(candidate_meta: dict, purpose_profile: dict) -> float:
-    if not purpose_profile: return 0.0
+    """ENHANCED purpose penalty calculation with comprehensive constraints"""
+    if not purpose_profile: 
+        return 0.0
+    
     penalty = 0.0
     try:
+        # Extract parameters with safe defaults
         wb_limit = purpose_profile.get('wb_limit', 1.0)
-        current_wb = candidate_meta.get('w_b', 0.5)
-        if current_wb > wb_limit:
-            penalty += (current_wb - wb_limit) * 1000
+        current_wb = float(candidate_meta.get('w_b', 0.5))
         scm_limit = purpose_profile.get('scm_limit', 0.5)
-        current_scm = candidate_meta.get('scm_total_frac', 0.0)
-        if current_scm > scm_limit:
-            penalty += (current_scm - scm_limit) * 100
+        current_scm = float(candidate_meta.get('scm_total_frac', 0.0))
         min_binder = purpose_profile.get('min_binder', 0.0)
-        current_binder = candidate_meta.get('cementitious', 300.0)
+        max_binder = purpose_profile.get('max_binder', 600.0)
+        current_binder = float(candidate_meta.get('cementitious', 300.0))
+        target_slump_min, target_slump_max = purpose_profile.get('target_slump_range', (50, 150))
+        current_slump = float(candidate_meta.get('slump', 100.0))
+        min_fines_content = purpose_profile.get('min_fines_content', 300)
+        current_fines = float(candidate_meta.get('fine', 0)) + current_binder * float(candidate_meta.get('sf_frac', 0.0))
+        max_sp_frac = purpose_profile.get('max_sp_frac', 0.03)
+        current_sp_frac = float(candidate_meta.get('sp', 0)) / current_binder if current_binder > 0 else 0
+        
+        # Enhanced penalty calculations with graduated scaling
+        
+        # 1. Water-binder ratio penalty (most critical)
+        if current_wb > wb_limit:
+            excess_wb = current_wb - wb_limit
+            penalty += excess_wb * 2000  # Increased weight for w/b violations
+        
+        # 2. SCM limit penalty
+        if current_scm > scm_limit:
+            excess_scm = current_scm - scm_limit
+            penalty += excess_scm * 500  # Moderate penalty for SCM excess
+        
+        # 3. Binder content range penalty
         if current_binder < min_binder:
-            penalty += (min_binder - current_binder) * 0.1
-            
-        # HPC-specific penalties
-        sf_frac = candidate_meta.get('sf_frac', 0.0)
+            deficit_binder = min_binder - current_binder
+            penalty += deficit_binder * 2  # Higher penalty for insufficient binder
+        elif current_binder > max_binder:
+            excess_binder = current_binder - max_binder
+            penalty += excess_binder * 0.5  # Lower penalty for excess binder
+        
+        # 4. Slump range penalty
+        if current_slump < target_slump_min:
+            slump_deficit = target_slump_min - current_slump
+            penalty += slump_deficit * 1.5
+        elif current_slump > target_slump_max:
+            slump_excess = current_slump - target_slump_max
+            penalty += slump_excess * 1.0
+        
+        # 5. Fines content penalty
+        if current_fines < min_fines_content:
+            fines_deficit = min_fines_content - current_fines
+            penalty += fines_deficit * 0.3
+        
+        # 6. SP fraction penalty
+        if current_sp_frac > max_sp_frac:
+            sp_excess = current_sp_frac - max_sp_frac
+            penalty += sp_excess * 1000  # High penalty for excessive SP
+        
+        # 7. HPC-specific penalties
+        sf_frac = float(candidate_meta.get('sf_frac', 0.0))
         if sf_frac > 0:
             # Penalty for insufficient SP with silica fume
-            sp_frac = candidate_meta.get('sp', 0) / current_binder if current_binder > 0 else 0
-            if sp_frac < 0.015:  # Minimum SP for silica fume
-                penalty += (0.015 - sp_frac) * 500
+            if current_sp_frac < 0.015:  # Minimum SP for silica fume
+                penalty += (0.015 - current_sp_frac) * 2000  # Increased penalty
                 
             # Penalty for high w/b with silica fume
             if current_wb > 0.40:
-                penalty += (current_wb - 0.40) * 200
+                penalty += (current_wb - 0.40) * 1000  # Increased penalty
                 
+            # Penalty for insufficient fines with silica fume
+            if current_fines < 400:
+                penalty += (400 - current_fines) * 0.5
+        
+        # 8. Purpose-specific priority-based penalties
+        strength_priority = purpose_profile.get('strength_priority', 'medium')
+        durability_priority = purpose_profile.get('durability_priority', 'medium')
+        workability_priority = purpose_profile.get('workability_priority', 'medium')
+        cost_priority = purpose_profile.get('cost_priority', 'medium')
+        sustainability_priority = purpose_profile.get('sustainability_priority', 'medium')
+        
+        # Convert priorities to weights
+        strength_weight = CONSTANTS.PRIORITY_WEIGHTS.get(strength_priority, 0.6)
+        durability_weight = CONSTANTS.PRIORITY_WEIGHTS.get(durability_priority, 0.6)
+        workability_weight = CONSTANTS.PRIORITY_WEIGHTS.get(workability_priority, 0.6)
+        cost_weight = CONSTANTS.PRIORITY_WEIGHTS.get(cost_priority, 0.6)
+        sustainability_weight = CONSTANTS.PRIORITY_WEIGHTS.get(sustainability_priority, 0.6)
+        
+        # Strength-related penalty (based on strength efficiency)
+        strength_efficiency = float(candidate_meta.get('fck_target', 30.0)) / (current_binder / 100) if current_binder > 0 else 0
+        if strength_efficiency < 0.3:  # Low strength efficiency
+            penalty += (0.3 - strength_efficiency) * 500 * strength_weight
+        
+        # Durability-related penalty (based on w/b ratio)
+        if current_wb > 0.5:  # High w/b ratio indicates poor durability
+            penalty += (current_wb - 0.5) * 300 * durability_weight
+        
+        # Workability penalty (slump deviation)
+        target_slump_ideal = (target_slump_min + target_slump_max) / 2
+        slump_deviation = abs(current_slump - target_slump_ideal)
+        penalty += slump_deviation * 0.5 * workability_weight
+        
+        # Cost penalty (if cost is high priority)
+        current_cost = float(candidate_meta.get('cost_total', 0))
+        if current_cost > 5000:  # High cost threshold
+            penalty += (current_cost - 5000) * 0.01 * cost_weight
+        
+        # Sustainability penalty (if sustainability is high priority)
+        current_co2 = float(candidate_meta.get('co2_total', 0))
+        if current_co2 > 400:  # High CO2 threshold
+            penalty += (current_co2 - 400) * 0.1 * sustainability_weight
+            
         return float(max(0.0, penalty))
-    except Exception:
-        return 0.0
+        
+    except Exception as e:
+        return 1000.0  # High penalty for calculation errors
 
 @st.cache_data
 def compute_purpose_penalty_vectorized(df: pd.DataFrame, purpose_profile: dict) -> pd.Series:
-    """Vectorized version of compute_purpose_penalty for the optimization grid."""
+    """Vectorized version of enhanced compute_purpose_penalty for the optimization grid."""
     if not purpose_profile:
         return pd.Series(0.0, index=df.index)
     
     penalty = pd.Series(0.0, index=df.index)
     
+    # Extract profile parameters
     wb_limit = purpose_profile.get('wb_limit', 1.0)
-    penalty += (df['w_b'] - wb_limit).clip(lower=0) * 1000
-    
     scm_limit = purpose_profile.get('scm_limit', 0.5)
-    penalty += (df['scm_total_frac'] - scm_limit).clip(lower=0) * 100
-    
     min_binder = purpose_profile.get('min_binder', 0.0)
-    penalty += (min_binder - df['binder']).clip(lower=0) * 0.1
+    max_binder = purpose_profile.get('max_binder', 600.0)
+    target_slump_min, target_slump_max = purpose_profile.get('target_slump_range', (50, 150))
+    min_fines_content = purpose_profile.get('min_fines_content', 300)
+    max_sp_frac = purpose_profile.get('max_sp_frac', 0.03)
     
-    # HPC-specific vectorized penalties
+    # Priority weights
+    strength_priority = purpose_profile.get('strength_priority', 'medium')
+    durability_priority = purpose_profile.get('durability_priority', 'medium')
+    workability_priority = purpose_profile.get('workability_priority', 'medium')
+    cost_priority = purpose_profile.get('cost_priority', 'medium')
+    sustainability_priority = purpose_profile.get('sustainability_priority', 'medium')
+    
+    strength_weight = CONSTANTS.PRIORITY_WEIGHTS.get(strength_priority, 0.6)
+    durability_weight = CONSTANTS.PRIORITY_WEIGHTS.get(durability_priority, 0.6)
+    workability_weight = CONSTANTS.PRIORITY_WEIGHTS.get(workability_priority, 0.6)
+    cost_weight = CONSTANTS.PRIORITY_WEIGHTS.get(cost_priority, 0.6)
+    sustainability_weight = CONSTANTS.PRIORITY_WEIGHTS.get(sustainability_priority, 0.6)
+    
+    # 1. Water-binder ratio penalty
+    penalty += (df['w_b'] - wb_limit).clip(lower=0) * 2000
+    
+    # 2. SCM limit penalty
+    penalty += (df['scm_total_frac'] - scm_limit).clip(lower=0) * 500
+    
+    # 3. Binder content range penalty
+    penalty += (min_binder - df['binder']).clip(lower=0) * 2
+    penalty += (df['binder'] - max_binder).clip(lower=0) * 0.5
+    
+    # 4. Slump range penalty (using target_slump from inputs)
+    # Note: This assumes slump is constant in the optimization - may need adjustment
+    target_slump = df.get('target_slump', 100.0)
+    penalty += ((target_slump_min - target_slump).clip(lower=0) * 1.5 +
+               (target_slump - target_slump_max).clip(lower=0) * 1.0)
+    
+    # 5. Fines content penalty
     sf_frac_series = df.get('sf_frac', pd.Series(0.0, index=df.index))
+    fines_content_series = df['fine_wet'] + df['binder'] * sf_frac_series
+    penalty += (min_fines_content - fines_content_series).clip(lower=0) * 0.3
+    
+    # 6. SP fraction penalty
     sp_frac_series = df['sp'] / df['binder'].replace(0, 1)
+    penalty += (sp_frac_series - max_sp_frac).clip(lower=0) * 1000
     
-    # Penalty for insufficient SP with silica fume
-    penalty += ((0.015 - sp_frac_series).clip(lower=0) * 500 * (sf_frac_series > 0))
+    # 7. HPC-specific penalties
+    penalty += ((0.015 - sp_frac_series).clip(lower=0) * 2000 * (sf_frac_series > 0))
+    penalty += ((df['w_b'] - 0.40).clip(lower=0) * 1000 * (sf_frac_series > 0))
+    penalty += ((400 - fines_content_series).clip(lower=0) * 0.5 * (sf_frac_series > 0))
     
-    # Penalty for high w/b with silica fume
-    penalty += ((df['w_b'] - 0.40).clip(lower=0) * 200 * (sf_frac_series > 0))
+    # 8. Priority-based penalties
+    # Strength efficiency penalty
+    strength_efficiency_series = df['fck_target'] / (df['binder'] / 100).replace(0, 1)
+    penalty += ((0.3 - strength_efficiency_series).clip(lower=0) * 500 * strength_weight)
     
-    return penalty.fillna(0.0)
+    # Durability penalty
+    penalty += ((df['w_b'] - 0.5).clip(lower=0) * 300 * durability_weight)
+    
+    # Workability penalty (simplified - using w/b as proxy)
+    workability_penalty = (df['w_b'] - 0.4).clip(lower=0) * 100 * workability_weight
+    penalty += workability_penalty
+    
+    # Cost penalty (if cost data available)
+    if 'cost_total' in df.columns:
+        penalty += ((df['cost_total'] - 5000).clip(lower=0) * 0.01 * cost_weight)
+    
+    # Sustainability penalty (if CO2 data available)
+    if 'co2_total' in df.columns:
+        penalty += ((df['co2_total'] - 400).clip(lower=0) * 0.1 * sustainability_weight)
+    
+    return penalty.fillna(1000.0)  # High penalty for NaN values
 
 @st.cache_data
 def load_data(materials_file=None, emissions_file=None, cost_file=None):
@@ -1361,7 +1679,7 @@ def display_mix_details(title, df, meta, exposure):
     for warning in warnings:
         st.warning(warning, icon="⚠️")
     if (purpose != "General" or enable_hpc) and "purpose_metrics" in meta:
-        with st.expander(f"Show Estimated Purpose-Specific Metrics ({purpose})"):
+        with st.expander(f"Show Enhanced Purpose-Specific Metrics ({purpose})"):
             st.json(meta["purpose_metrics"])
     with st.expander("Show detailed calculation parameters"):
         if "purpose_metrics" in derived:
