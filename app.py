@@ -1,5 +1,3 @@
-
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -641,10 +639,15 @@ def compute_purpose_penalty_vectorized(df: pd.DataFrame, purpose_profile: dict) 
     penalty += (df['binder'] - max_binder).clip(lower=0) * 0.5
     
     # 4. Slump range penalty (using target_slump from inputs)
-    # Note: This assumes slump is constant in the optimization - may need adjustment
-    target_slump = df.get('target_slump', 100.0)
-    penalty += ((target_slump_min - target_slump).clip(lower=0) * 1.5 +
-               (target_slump - target_slump_max).clip(lower=0) * 1.0)
+    # FIX: Check if 'target_slump' exists in df, otherwise use a default value
+    if 'target_slump' in df.columns:
+        target_slump_series = df['target_slump']
+    else:
+        # If target_slump is not in the dataframe, use the midpoint of the target range
+        target_slump_series = pd.Series((target_slump_min + target_slump_max) / 2, index=df.index)
+    
+    penalty += ((target_slump_min - target_slump_series).clip(lower=0) * 1.5 +
+               (target_slump_series - target_slump_max).clip(lower=0) * 1.0)
     
     # 5. Fines content penalty
     sf_frac_series = df.get('sf_frac', pd.Series(0.0, index=df.index))
