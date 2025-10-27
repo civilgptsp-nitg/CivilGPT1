@@ -1,8 +1,3 @@
-File "/mount/src/civilgpt1/app.py", line 2610
-                  st.download_button("✖️ Baseline Mix (CSV)", data=base_df.to_csv(index=False).encode("utf-8)", file_name="baseline_mix.csv", mime="text/csv", use_container_width=True)
-                                    ^
-SyntaxError: '(' was never closed
-
 
 import streamlit as st
 import pandas as pd
