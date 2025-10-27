@@ -911,7 +911,7 @@ def parse_user_prompt_llm(prompt_text: str) -> dict:
     try:
         # Primary model attempt
         resp = client.chat.completions.create(
-            model="llama3-70b-8192",
+            model="llama-3.1-70b-versatile",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt_text}
@@ -923,11 +923,11 @@ def parse_user_prompt_llm(prompt_text: str) -> dict:
         parsed_json = json.loads(content)
         
     except Exception as e:
-        st.warning(f"Primary model (llama3-70b-8192) failed: {e}. Trying fallback model...")
+        st.warning(f"Primary model (llama-3.1-70b-versatile) failed: {e}. Trying fallback model...")
         try:
             # Fallback model attempt
             resp = client.chat.completions.create(
-                model="gemma2-9b-it",
+                model="mixtral-8x7b-32768",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": prompt_text}
