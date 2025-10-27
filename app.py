@@ -1,3 +1,10 @@
+💥
+An unexpected error occurred: Cannot set a DataFrame with multiple columns to the single column sp
+
+str: Traceback (most recent call last): File "/mount/src/civilgpt1/app.py", line 1857, in run_generation_logic opt_df, opt_meta, trace = generate_mix( ~~~~~~~~~~~~^ inputs["grade"], inputs["exposure"], inputs["nom_max"], ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ ...<9 lines>... **calibration_kwargs ^^^^^^^^^^^^^^^^^^^^ ) ^ File "/mount/src/civilgpt1/app.py", line 1408, in generate_mix grid_df['sp'] = grid_df.apply( ~~~~~~~^^^^^^ File "/home/adminuser/venv/lib/python3.13/site-packages/pandas/core/frame.py", line 4312, in __setitem__ self._set_item_frame_value(key, value) ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^ File "/home/adminuser/venv/lib/python3.13/site-packages/pandas/core/frame.py", line 4470, in _set_item_frame_value raise ValueError( ...<2 lines>... ) ValueError: Cannot set a DataFrame with multiple columns to the single column sp
+Traceback:
+Cannot extract the stack trace for this exception. Try calling exception() within the `catch` block.
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -1213,7 +1220,7 @@ def get_compliance_reasons_vectorized(df: pd.DataFrame, exposure: str) -> pd.Ser
     )
     reasons += np.where(
         ~((df['total_mass'] >= 2200) & (df['total_mass'] <= 2600)),
-        "Unit weight outside range (" + df['total_mass'].round(1).astype(str) + " not in 2200-2600); ",
+        "Unit weight outside range (" + df['total_mass'].round(1).astize(str) + " not in 2200-2600); ",
         ""
     )
     
@@ -1225,12 +1232,12 @@ def get_compliance_reasons_vectorized(df: pd.DataFrame, exposure: str) -> pd.Ser
     
     reasons += np.where(
         (sf_frac_series > 0) & (sp_frac_series < 0.015),
-        "Insufficient SP for silica fume (" + (sp_frac_series * 100).round(1).astype(str) + "% < 1.5%); ",
+        "Insufficient SP for silica fume (" + (sp_frac_series * 100).round(1).astize(str) + "% < 1.5%); ",
         ""
     )
     reasons += np.where(
         (sf_frac_series > 0) & (fines_content_series < CONSTANTS.HPC_MIN_FINES_CONTENT),
-        "Insufficient fines for HPC pumpability (" + fines_content_series.round(0).astype(str) + " kg/m³ < " + str(CONSTANTS.HPC_MIN_FINES_CONTENT) + " kg/m³); ",
+        "Insufficient fines for HPC pumpability (" + fines_content_series.round(0).astize(str) + " kg/m³ < " + str(CONSTANTS.HPC_MIN_FINES_CONTENT) + " kg/m³); ",
         ""
     )
     
@@ -1244,7 +1251,7 @@ def sieve_check_fa(df: pd.DataFrame, zone: str):
     try:
         limits, ok, msgs = CONSTANTS.FINE_AGG_ZONE_LIMITS[zone], True, []
         for sieve, (lo, hi) in limits.items():
-            row = df.loc[df["Sieve_mm"].astype(str) == sieve]
+            row = df.loc[df["Sieve_mm"].astize(str) == sieve]
             if row.empty:
                 ok = False; msgs.append(f"Missing sieve size: {sieve} mm."); continue
             p = float(row["PercentPassing"].iloc[0])
@@ -1258,7 +1265,7 @@ def sieve_check_ca(df: pd.DataFrame, nominal_mm: int):
     try:
         limits, ok, msgs = CONSTANTS.COARSE_LIMITS[int(nominal_mm)], True, []
         for sieve, (lo, hi) in limits.items():
-            row = df.loc[df["Sieve_mm"].astype(str) == sieve]
+            row = df.loc[df["Sieve_mm"].astize(str) == sieve]
             if row.empty:
                 ok = False; msgs.append(f"Missing sieve size: {sieve} mm."); continue
             p = float(row["PercentPassing"].iloc[0])
@@ -1280,7 +1287,7 @@ def _get_material_factors(materials_list, emissions_df, costs_df):
     co2_factors_dict = {}
     if emissions_df is not None and not emissions_df.empty and "CO2_Factor(kg_CO2_per_kg)" in emissions_df.columns:
         emissions_df_norm = emissions_df.copy()
-        emissions_df_norm['Material'] = emissions_df_norm['Material'].astype(str)
+        emissions_df_norm['Material'] = emissions_df_norm['Material'].astize(str)
         emissions_df_norm["Material_norm"] = emissions_df_norm["Material"].apply(_normalize_material_value)
         emissions_df_norm = emissions_df_norm.drop_duplicates(subset=["Material_norm"]).set_index("Material_norm")
         co2_factors_dict = emissions_df_norm["CO2_Factor(kg_CO2_per_kg)"].to_dict()
@@ -1288,7 +1295,7 @@ def _get_material_factors(materials_list, emissions_df, costs_df):
     cost_factors_dict = {}
     if costs_df is not None and not costs_df.empty and "Cost(₹/kg)" in costs_df.columns:
         costs_df_norm = costs_df.copy()
-        costs_df_norm['Material'] = costs_df_norm['Material'].astype(str)
+        costs_df_norm['Material'] = costs_df_norm['Material'].astize(str)
         costs_df_norm["Material_norm"] = costs_df_norm["Material"].apply(_normalize_material_value)
         costs_df_norm = costs_df_norm.drop_duplicates(subset=["Material_norm"]).set_index("Material_norm")
         cost_factors_dict = costs_df_norm["Cost(₹/kg)"].to_dict()
@@ -1402,14 +1409,19 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     grid_df['ggbs'] = grid_df['binder'] * grid_df['ggbs_frac']
     grid_df['silica_fume'] = grid_df['binder'] * grid_df['sf_frac']
     
-    # Apply HPC SP adjustment
-    base_sp = (0.01 * grid_df['binder']) if use_sp else 0.0
+    # FIXED: Apply HPC SP adjustment correctly - base_sp should be a Series, not scalar
+    base_sp_series = (0.01 * grid_df['binder']) if use_sp else pd.Series(0.0, index=grid_df.index)
+    
     if enable_hpc:
-        grid_df['sp'] = grid_df.apply(
-            lambda row: adjust_sp_for_HPC(base_sp, row['sf_frac'], hpc_options), axis=1
+        # Apply SP adjustment for HPC using vectorized operations
+        sp_multiplier = np.where(
+            grid_df['sf_frac'] > 0,
+            hpc_options["silica_fume"]["sp_effectiveness_boost"],
+            1.0
         )
+        grid_df['sp'] = base_sp_series * sp_multiplier
     else:
-        grid_df['sp'] = base_sp
+        grid_df['sp'] = base_sp_series
     
     if st_progress:
         st_progress.progress(0.3, text="Calculating aggregate proportions...")
@@ -2102,7 +2114,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
             # HPC material validation warning
             silica_fume_in_library = False
             if materials_df is not None and not materials_df.empty:
-                material_names = [str(m).lower() for m in materials_df["Material"].astype(str).tolist()]
+                material_names = [str(m).lower() for m in materials_df["Material"].astize(str).tolist()]
                 silica_fume_in_library = any("silica fume" in name or "microsilica" in name for name in material_names)
             
             if not silica_fume_in_library:
