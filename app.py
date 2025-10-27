@@ -13,9 +13,9 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import inch
 from functools import lru_cache
 from itertools import product
-import traceback # Added for cleaner error logging
-import uuid # For dynamic key
-import time # Added for time.sleep in a non-rerun scenario if needed
+import traceback
+import uuid
+import time
 
 # ==============================================================================
 # PART 1: CONSTANTS & CORE DATA
@@ -76,7 +76,6 @@ class CONSTANTS:
         "waterabsorption": "WaterAbsorption", "water_absorption": "WaterAbsorption"
     }
     
-    # ENHANCED PURPOSE PROFILES WITH DETAILED CONSTRAINTS
     PURPOSE_PROFILES = {
         "General": {
             "description": "A balanced, default mix. Follows IS code minimums without specific optimization bias.",
@@ -199,7 +198,6 @@ class CONSTANTS:
         }
     }
     
-    # Priority weight mappings for enhanced metrics
     PRIORITY_WEIGHTS = {
         "very_low": 0.2,
         "low": 0.4,
@@ -208,7 +206,6 @@ class CONSTANTS:
         "very_high": 1.0
     }
     
-    # HPC Options
     HPC_OPTIONS = {
         "silica_fume": {
             "max_frac": 0.10,
@@ -220,15 +217,13 @@ class CONSTANTS:
         }
     }
     
-    # HPC-specific constraints
     HPC_WB_RANGE = (0.25, 0.40)
-    HPC_MIN_BINDER_STRENGTH = 60  # MPa
-    HPC_SP_MAX_LIMIT = 0.03  # 3% of binder content
-    HPC_MIN_FINES_CONTENT = 400  # kg/m³ for pumpability
+    HPC_MIN_BINDER_STRENGTH = 60
+    HPC_SP_MAX_LIMIT = 0.03
+    HPC_MIN_FINES_CONTENT = 400
     
     CEMENT_TYPES = ["OPC 33", "OPC 43", "OPC 53", "PPC"]
     
-    # Normalized names for vectorized computation
     NORM_CEMENT = "cement"
     NORM_FLYASH = "fly ash"
     NORM_GGBS = "ggbs"
@@ -238,14 +233,12 @@ class CONSTANTS:
     NORM_FINE_AGG = "fine aggregate"
     NORM_COARSE_AGG = "coarse aggregate"
     
-    # Chat Mode Required Fields
     CHAT_REQUIRED_FIELDS = ["grade", "exposure", "target_slump", "nom_max", "cement_choice"]
 
 # ==============================================================================
 # PART 2: CACHED LOADERS & BACKEND LOGIC
 # ==============================================================================
 
-# --- LLM Client Initialization (Robust & Failsafe) ---
 client = None
 try:
     from groq import Groq
@@ -322,7 +315,7 @@ def _normalize_material_value(s: str) -> str:
     cand = get_close_matches(key2, list(synonyms.keys()), n=1, cutoff=0.78)
     if cand: return synonyms[cand[0]]
     
-    if s.startswith("opc"): return s # Handle cement types not explicitly in synonyms
+    if s.startswith("opc"): return s
     
     return s
 
@@ -357,21 +350,18 @@ def load_purpose_profiles(filepath=None):
     return CONSTANTS.PURPOSE_PROFILES
 
 def adjust_water_for_HPC(base_water: float, sf_frac: float, hpc_options: dict) -> float:
-    """Apply water demand multipliers for HPC admixtures"""
     if sf_frac > 0:
         multiplier = hpc_options["silica_fume"]["water_demand_multiplier"]
         return base_water * (1 + (multiplier - 1) * sf_frac)
     return base_water
 
 def adjust_sp_for_HPC(base_sp: float, sf_frac: float, hpc_options: dict) -> float:
-    """Increase SP dosage for silica fume mixes"""
     if sf_frac > 0:
         boost = hpc_options["silica_fume"]["sp_effectiveness_boost"]
         return base_sp * boost
     return base_sp
 
 def check_hpc_pumpability(fines_content: float, sp_content: float, binder_content: float) -> tuple:
-    """Validate HPC mix for pumpability"""
     min_fines = CONSTANTS.HPC_MIN_FINES_CONTENT
     max_sp_frac = CONSTANTS.HPC_SP_MAX_LIMIT
     sp_frac = sp_content / binder_content if binder_content > 0 else 0
@@ -382,7 +372,6 @@ def check_hpc_pumpability(fines_content: float, sp_content: float, binder_conten
     return fines_ok and sp_ok, fines_ok, sp_ok
 
 def evaluate_purpose_specific_metrics(candidate_meta: dict, purpose: str) -> dict:
-    """ENHANCED purpose-specific metrics with comprehensive evaluation"""
     try:
         purpose_profile = CONSTANTS.PURPOSE_PROFILES.get(purpose, CONSTANTS.PURPOSE_PROFILES["General"])
         
@@ -396,62 +385,46 @@ def evaluate_purpose_specific_metrics(candidate_meta: dict, purpose: str) -> dic
         sp_content = float(candidate_meta.get('sp', 0.0))
         sp_frac = sp_content / binder if binder > 0 else 0
         
-        # Enhanced modulus calculation with purpose-specific adjustments
-        if sf_frac > 0.05:  # Significant silica fume content
-            modulus_proxy = 5700 * np.sqrt(fck_target)  # HPC has higher modulus
+        if sf_frac > 0.05:
+            modulus_proxy = 5700 * np.sqrt(fck_target)
         else:
             modulus_proxy = 5000 * np.sqrt(fck_target)
             
-        # Enhanced shrinkage risk with purpose-specific sensitivity
         shrinkage_risk_index = (binder * water) / 10000.0
         
-        # Enhanced fatigue calculation for pavements
         fatigue_proxy = (1.0 - wb) * (binder / 1000.0)
-        if sf_frac > 0.02:  # Silica fume improves fatigue
+        if sf_frac > 0.02:
             fatigue_proxy *= 1.2
             
-        # HPC-specific metric
         hpc_strength_index = fck_target / (wb * 100) if wb > 0 else 0
         
-        # Pumpability assessment for HPC
         pumpable, fines_ok, sp_ok = check_hpc_pumpability(fines_content, sp_content, binder)
         
-        # NEW: Workability score based on slump and fines content
         target_slump_min, target_slump_max = purpose_profile.get('target_slump_range', (50, 150))
         slump_deviation = max(0, target_slump_min - slump, slump - target_slump_max)
         workability_score = max(0, 100 - slump_deviation * 2)
         
-        # NEW: Strength efficiency metric
         strength_efficiency = fck_target / (binder / 100) if binder > 0 else 0
         
-        # NEW: Durability index based on w/b ratio and binder content
         durability_index = (0.6 - wb) * 100 + min(50, binder - 300) * 0.1
         
-        # NEW: Cost efficiency metric
         cost_per_mpa = candidate_meta.get('cost_total', 0) / fck_target if fck_target > 0 else 0
         
-        # NEW: Sustainability score
         co2_per_mpa = candidate_meta.get('co2_total', 0) / fck_target if fck_target > 0 else 0
         sustainability_score = max(0, 100 - co2_per_mpa * 2)
         
-        # NEW: Purpose-specific compliance score
         compliance_score = 100
-        # Check w/b compliance
         if wb > purpose_profile.get('wb_limit', 1.0):
             compliance_score -= (wb - purpose_profile['wb_limit']) * 100
-        # Check SCM compliance
         scm_total = candidate_meta.get('scm_total_frac', 0.0)
         if scm_total > purpose_profile.get('scm_limit', 0.5):
             compliance_score -= (scm_total - purpose_profile['scm_limit']) * 50
-        # Check binder range compliance
         if binder < purpose_profile.get('min_binder', 0.0):
             compliance_score -= (purpose_profile['min_binder'] - binder) * 0.5
         if binder > purpose_profile.get('max_binder', 600.0):
             compliance_score -= (binder - purpose_profile['max_binder']) * 0.2
-        # Check fines content compliance
         if fines_content < purpose_profile.get('min_fines_content', 300):
             compliance_score -= (purpose_profile['min_fines_content'] - fines_content) * 0.1
-        # Check SP fraction compliance
         if sp_frac > purpose_profile.get('max_sp_frac', 0.03):
             compliance_score -= (sp_frac - purpose_profile['max_sp_frac']) * 500
             
@@ -481,13 +454,11 @@ def evaluate_purpose_specific_metrics(candidate_meta: dict, purpose: str) -> dic
         }
 
 def compute_purpose_penalty(candidate_meta: dict, purpose_profile: dict) -> float:
-    """ENHANCED purpose penalty calculation with comprehensive constraints"""
     if not purpose_profile: 
         return 0.0
     
     penalty = 0.0
     try:
-        # Extract parameters with safe defaults
         wb_limit = purpose_profile.get('wb_limit', 1.0)
         current_wb = float(candidate_meta.get('w_b', 0.5))
         scm_limit = purpose_profile.get('scm_limit', 0.5)
@@ -502,27 +473,21 @@ def compute_purpose_penalty(candidate_meta: dict, purpose_profile: dict) -> floa
         max_sp_frac = purpose_profile.get('max_sp_frac', 0.03)
         current_sp_frac = float(candidate_meta.get('sp', 0)) / current_binder if current_binder > 0 else 0
         
-        # Enhanced penalty calculations with graduated scaling
-        
-        # 1. Water-binder ratio penalty (most critical)
         if current_wb > wb_limit:
             excess_wb = current_wb - wb_limit
-            penalty += excess_wb * 2000  # Increased weight for w/b violations
+            penalty += excess_wb * 2000
         
-        # 2. SCM limit penalty
         if current_scm > scm_limit:
             excess_scm = current_scm - scm_limit
-            penalty += excess_scm * 500  # Moderate penalty for SCM excess
+            penalty += excess_scm * 500
         
-        # 3. Binder content range penalty
         if current_binder < min_binder:
             deficit_binder = min_binder - current_binder
-            penalty += deficit_binder * 2  # Higher penalty for insufficient binder
+            penalty += deficit_binder * 2
         elif current_binder > max_binder:
             excess_binder = current_binder - max_binder
-            penalty += excess_binder * 0.5  # Lower penalty for excess binder
+            penalty += excess_binder * 0.5
         
-        # 4. Slump range penalty
         if current_slump < target_slump_min:
             slump_deficit = target_slump_min - current_slump
             penalty += slump_deficit * 1.5
@@ -530,83 +495,68 @@ def compute_purpose_penalty(candidate_meta: dict, purpose_profile: dict) -> floa
             slump_excess = current_slump - target_slump_max
             penalty += slump_excess * 1.0
         
-        # 5. Fines content penalty
         if current_fines < min_fines_content:
             fines_deficit = min_fines_content - current_fines
             penalty += fines_deficit * 0.3
         
-        # 6. SP fraction penalty
         if current_sp_frac > max_sp_frac:
             sp_excess = current_sp_frac - max_sp_frac
-            penalty += sp_excess * 1000  # High penalty for excessive SP
+            penalty += sp_excess * 1000
         
-        # 7. HPC-specific penalties
         sf_frac = float(candidate_meta.get('sf_frac', 0.0))
         if sf_frac > 0:
-            # Penalty for insufficient SP with silica fume
-            if current_sp_frac < 0.015:  # Minimum SP for silica fume
-                penalty += (0.015 - current_sp_frac) * 2000  # Increased penalty
+            if current_sp_frac < 0.015:
+                penalty += (0.015 - current_sp_frac) * 2000
                 
-            # Penalty for high w/b with silica fume
             if current_wb > 0.40:
-                penalty += (current_wb - 0.40) * 1000  # Increased penalty
+                penalty += (current_wb - 0.40) * 1000
                 
-            # Penalty for insufficient fines with silica fume
             if current_fines < 400:
                 penalty += (400 - current_fines) * 0.5
         
-        # 8. Purpose-specific priority-based penalties
         strength_priority = purpose_profile.get('strength_priority', 'medium')
         durability_priority = purpose_profile.get('durability_priority', 'medium')
         workability_priority = purpose_profile.get('workability_priority', 'medium')
         cost_priority = purpose_profile.get('cost_priority', 'medium')
         sustainability_priority = purpose_profile.get('sustainability_priority', 'medium')
         
-        # Convert priorities to weights
         strength_weight = CONSTANTS.PRIORITY_WEIGHTS.get(strength_priority, 0.6)
         durability_weight = CONSTANTS.PRIORITY_WEIGHTS.get(durability_priority, 0.6)
         workability_weight = CONSTANTS.PRIORITY_WEIGHTS.get(workability_priority, 0.6)
         cost_weight = CONSTANTS.PRIORITY_WEIGHTS.get(cost_priority, 0.6)
         sustainability_weight = CONSTANTS.PRIORITY_WEIGHTS.get(sustainability_priority, 0.6)
         
-        # Strength-related penalty (based on strength efficiency)
         strength_efficiency = float(candidate_meta.get('fck_target', 30.0)) / (current_binder / 100) if current_binder > 0 else 0
-        if strength_efficiency < 0.3:  # Low strength efficiency
+        if strength_efficiency < 0.3:
             penalty += (0.3 - strength_efficiency) * 500 * strength_weight
         
-        # Durability-related penalty (based on w/b ratio)
-        if current_wb > 0.5:  # High w/b ratio indicates poor durability
+        if current_wb > 0.5:
             penalty += (current_wb - 0.5) * 300 * durability_weight
         
-        # Workability penalty (slump deviation)
         target_slump_ideal = (target_slump_min + target_slump_max) / 2
         slump_deviation = abs(current_slump - target_slump_ideal)
         penalty += slump_deviation * 0.5 * workability_weight
         
-        # Cost penalty (if cost is high priority)
         current_cost = float(candidate_meta.get('cost_total', 0))
-        if current_cost > 5000:  # High cost threshold
+        if current_cost > 5000:
             penalty += (current_cost - 5000) * 0.01 * cost_weight
         
-        # Sustainability penalty (if sustainability is high priority)
         current_co2 = float(candidate_meta.get('co2_total', 0))
-        if current_co2 > 400:  # High CO2 threshold
+        if current_co2 > 400:
             penalty += (current_co2 - 400) * 0.1 * sustainability_weight
             
         return float(max(0.0, penalty))
         
     except Exception as e:
-        return 1000.0  # High penalty for calculation errors
+        return 1000.0
 
 @st.cache_data
 def compute_purpose_penalty_vectorized(df: pd.DataFrame, purpose_profile: dict) -> pd.Series:
-    """Vectorized version of enhanced compute_purpose_penalty for the optimization grid."""
     if not purpose_profile:
         return pd.Series(0.0, index=df.index)
     
     penalty = pd.Series(0.0, index=df.index)
     
-    # Extract profile parameters
     wb_limit = purpose_profile.get('wb_limit', 1.0)
     scm_limit = purpose_profile.get('scm_limit', 0.5)
     min_binder = purpose_profile.get('min_binder', 0.0)
@@ -615,7 +565,6 @@ def compute_purpose_penalty_vectorized(df: pd.DataFrame, purpose_profile: dict) 
     min_fines_content = purpose_profile.get('min_fines_content', 300)
     max_sp_frac = purpose_profile.get('max_sp_frac', 0.03)
     
-    # Priority weights
     strength_priority = purpose_profile.get('strength_priority', 'medium')
     durability_priority = purpose_profile.get('durability_priority', 'medium')
     workability_priority = purpose_profile.get('workability_priority', 'medium')
@@ -628,46 +577,33 @@ def compute_purpose_penalty_vectorized(df: pd.DataFrame, purpose_profile: dict) 
     cost_weight = CONSTANTS.PRIORITY_WEIGHTS.get(cost_priority, 0.6)
     sustainability_weight = CONSTANTS.PRIORITY_WEIGHTS.get(sustainability_priority, 0.6)
     
-    # 1. Water-binder ratio penalty
     penalty += (df['w_b'] - wb_limit).clip(lower=0) * 2000
     
-    # 2. SCM limit penalty
     penalty += (df['scm_total_frac'] - scm_limit).clip(lower=0) * 500
     
-    # 3. Binder content range penalty
     penalty += (min_binder - df['binder']).clip(lower=0) * 2
     penalty += (df['binder'] - max_binder).clip(lower=0) * 0.5
     
-    # 4. Slump range penalty (using target_slump from inputs)
-    # FIX: Check if 'target_slump' exists in df, otherwise use a default value
     if 'target_slump' in df.columns:
         target_slump_series = df['target_slump']
     else:
-        # If target_slump is not in the dataframe, use the midpoint of the target range
         target_slump_series = pd.Series((target_slump_min + target_slump_max) / 2, index=df.index)
     
     penalty += ((target_slump_min - target_slump_series).clip(lower=0) * 1.5 +
                (target_slump_series - target_slump_max).clip(lower=0) * 1.0)
     
-    # 5. Fines content penalty
     sf_frac_series = df.get('sf_frac', pd.Series(0.0, index=df.index))
     fines_content_series = df['fine_wet'] + df['binder'] * sf_frac_series
     penalty += (min_fines_content - fines_content_series).clip(lower=0) * 0.3
     
-    # 6. SP fraction penalty
     sp_frac_series = df['sp'] / df['binder'].replace(0, 1)
     penalty += (sp_frac_series - max_sp_frac).clip(lower=0) * 1000
     
-    # 7. HPC-specific penalties
     penalty += ((0.015 - sp_frac_series).clip(lower=0) * 2000 * (sf_frac_series > 0))
     penalty += ((df['w_b'] - 0.40).clip(lower=0) * 1000 * (sf_frac_series > 0))
     penalty += ((400 - fines_content_series).clip(lower=0) * 0.5 * (sf_frac_series > 0))
     
-    # 8. Priority-based penalties
-    # Strength efficiency penalty - FIXED: Use grade strength instead of fck_target
-    # Calculate fck_target from grade if not available
     if 'fck_target' not in df.columns and 'grade' in df.columns:
-        # Extract grade from the first row if available, or use default
         try:
             grade_str = df['grade'].iloc[0] if len(df) > 0 else "M30"
             fck_value = CONSTANTS.GRADE_STRENGTH.get(grade_str, 30.0)
@@ -679,27 +615,22 @@ def compute_purpose_penalty_vectorized(df: pd.DataFrame, purpose_profile: dict) 
     elif 'fck_target' in df.columns:
         strength_efficiency_series = df['fck_target'] / (df['binder'] / 100).replace(0, 1)
     else:
-        # Fallback: use a default strength efficiency
         strength_efficiency_series = pd.Series(0.3, index=df.index)
     
     penalty += ((0.3 - strength_efficiency_series).clip(lower=0) * 500 * strength_weight)
     
-    # Durability penalty
     penalty += ((df['w_b'] - 0.5).clip(lower=0) * 300 * durability_weight)
     
-    # Workability penalty (simplified - using w/b as proxy)
     workability_penalty = (df['w_b'] - 0.4).clip(lower=0) * 100 * workability_weight
     penalty += workability_penalty
     
-    # Cost penalty (if cost data available)
     if 'cost_total' in df.columns:
         penalty += ((df['cost_total'] - 5000).clip(lower=0) * 0.01 * cost_weight)
     
-    # Sustainability penalty (if CO2 data available)
     if 'co2_total' in df.columns:
         penalty += ((df['co2_total'] - 400).clip(lower=0) * 0.1 * sustainability_weight)
     
-    return penalty.fillna(1000.0)  # High penalty for NaN values
+    return penalty.fillna(1000.0)
 
 @st.cache_data
 def load_data(materials_file=None, emissions_file=None, cost_file=None):
@@ -707,7 +638,6 @@ def load_data(materials_file=None, emissions_file=None, cost_file=None):
         if file is not None:
             try:
                 if hasattr(file, 'seek'): file.seek(0)
-                # Attempt to read as CSV (assuming user uploaded CSV per design)
                 return pd.read_csv(file)
             except Exception as e:
                 st.warning(f"Could not read uploaded file {file.name}: {e}")
@@ -723,36 +653,34 @@ def load_data(materials_file=None, emissions_file=None, cost_file=None):
                 except Exception as e: st.warning(f"Could not read {p}: {e}")
         return None
 
-    # Use uploaded files or fallbacks
     materials = _safe_read(materials_file, _load_fallback(["materials_library.csv", "data/materials_library.csv"]))
     emissions = _safe_read(emissions_file, _load_fallback(["emission_factors.csv", "data/emission_factors.csv"]))
     costs = _safe_read(cost_file, _load_fallback(["cost_factors.csv", "data/cost_factors.csv"]))
 
     materials = _normalize_columns(materials, CONSTANTS.MATERIALS_COL_MAP)
-    if "Material" in materials.columns:
+    if materials is not None and not materials.empty and "Material" in materials.columns:
         materials["Material"] = materials["Material"].astype(str).str.strip()
-    if materials.empty or "Material" not in materials.columns:
+    if materials is None or materials.empty or "Material" not in materials.columns:
         st.warning("Could not load 'materials_library.csv'. Using empty library.", icon="ℹ️")
         materials = pd.DataFrame(columns=list(dict.fromkeys(CONSTANTS.MATERIALS_COL_MAP.values())))
 
     emissions = _normalize_columns(emissions, CONSTANTS.EMISSIONS_COL_MAP)
-    if "Material" in emissions.columns:
+    if emissions is not None and not emissions.empty and "Material" in emissions.columns:
         emissions["Material"] = emissions["Material"].astype(str).str.strip()
-    if emissions.empty or "Material" not in emissions.columns or "CO2_Factor(kg_CO2_per_kg)" not in emissions.columns:
+    if emissions is None or emissions.empty or "Material" not in emissions.columns or "CO2_Factor(kg_CO2_per_kg)" not in emissions.columns:
         st.warning("⚠️ Could not load 'emission_factors.csv'. CO2 calculations will be zero.")
         emissions = pd.DataFrame(columns=list(dict.fromkeys(CONSTANTS.EMISSIONS_COL_MAP.values())))
                                                                                                      
     costs = _normalize_columns(costs, CONSTANTS.COSTS_COL_MAP)
-    if "Material" in costs.columns:
+    if costs is not None and not costs.empty and "Material" in costs.columns:
         costs["Material"] = costs["Material"].astype(str).str.strip()
-    if costs.empty or "Material" not in costs.columns or "Cost(₹/kg)" not in costs.columns:
+    if costs is None or costs.empty or "Material" not in costs.columns or "Cost(₹/kg)" not in costs.columns:
         st.warning("⚠️ Could not load 'cost_factors.csv'. Cost calculations will be zero.")
         costs = pd.DataFrame(columns=list(dict.fromkeys(CONSTANTS.COSTS_COL_MAP.values())))
 
     return materials, emissions, costs
 
 def _merge_and_warn(main_df: pd.DataFrame, factor_df: pd.DataFrame, factor_col: str, warning_session_key: str, warning_prefix: str) -> pd.DataFrame:
-    """Helper to merge factor dataframes and issue warnings for missing values."""
     if factor_df is not None and not factor_df.empty and factor_col in factor_df.columns:
         factor_df_norm = factor_df.copy()
         factor_df_norm['Material'] = factor_df_norm['Material'].astype(str)
@@ -769,8 +697,6 @@ def _merge_and_warn(main_df: pd.DataFrame, factor_df: pd.DataFrame, factor_col: 
                 st.session_state[warning_session_key] = set()
             new_missing = set(missing_items) - st.session_state[warning_session_key]
             if new_missing:
-                # IMPORTANT: Since this function can run many times, we only warn once per session/material
-                # st.warning(f"{warning_prefix}: {', '.join(list(new_missing))}. Value will be 0 for these.", icon="⚠️")
                 st.session_state[warning_session_key].update(new_missing)
         
         merged_df[factor_col] = merged_df[factor_col].fillna(0.0)
@@ -780,16 +706,13 @@ def _merge_and_warn(main_df: pd.DataFrame, factor_df: pd.DataFrame, factor_col: 
         return main_df
 
 def pareto_front(df, x_col="cost", y_col="co2", z_col="purpose_penalty"):
-    """Enhanced Pareto front calculation with three objectives: cost, CO2, and purpose_penalty"""
     if df.empty:
         return pd.DataFrame(columns=df.columns)
     
-    # Sort by cost first (primary objective)
     sorted_df = df.sort_values(by=[x_col, y_col, z_col], ascending=[True, True, True])
     pareto_points = []
     
     for _, row in sorted_df.iterrows():
-        # Check if this point is dominated by any existing Pareto point
         dominated = False
         for pareto_point in pareto_points:
             if (pareto_point[x_col] <= row[x_col] and 
@@ -802,7 +725,6 @@ def pareto_front(df, x_col="cost", y_col="co2", z_col="purpose_penalty"):
                 break
                 
         if not dominated:
-            # Remove any points that are dominated by the new point
             pareto_points = [p for p in pareto_points if not (
                 row[x_col] <= p[x_col] and 
                 row[y_col] <= p[y_col] and 
@@ -830,12 +752,10 @@ def reasonable_binder_range(grade: str):
 
 @st.cache_data
 def _get_coarse_agg_fraction_base(nom_max_mm: float, fa_zone: str) -> float:
-    """Helper to get the scalar base fraction."""
     return CONSTANTS.COARSE_AGG_FRAC_BY_ZONE.get(nom_max_mm, {}).get(fa_zone, 0.62)
 
 @st.cache_data
 def get_coarse_agg_fraction(nom_max_mm: float, fa_zone: str, wb_ratio: float) -> float:
-    """Scalar version for baseline calculation."""
     base_fraction = _get_coarse_agg_fraction_base(nom_max_mm, fa_zone)
     correction = ((0.50 - wb_ratio) / 0.05) * 0.01
     corrected_fraction = base_fraction + correction
@@ -843,7 +763,6 @@ def get_coarse_agg_fraction(nom_max_mm: float, fa_zone: str, wb_ratio: float) ->
 
 @st.cache_data
 def get_coarse_agg_fraction_vectorized(nom_max_mm: float, fa_zone: str, wb_ratio_series: pd.Series) -> pd.Series:
-    """Vectorized version for optimization grid."""
     base_fraction = _get_coarse_agg_fraction_base(nom_max_mm, fa_zone)
     correction = ((0.50 - wb_ratio_series) / 0.05) * 0.01
     corrected_fraction = base_fraction + correction
@@ -872,14 +791,13 @@ def run_lab_calibration(lab_df):
         return None, {}
     results_df = pd.DataFrame(results)
     mae = results_df["Error (MPa)"].abs().mean()
-    rmse = np.sqrt((results_df["Error (MPa)"].clip(lower=0) ** 2).mean()) # Cliped lower to 0 for robustness
+    rmse = np.sqrt((results_df["Error (MPa)"].clip(lower=0) ** 2).mean())
     bias = results_df["Error (MPa)"].mean()
     metrics = {"Mean Absolute Error (MPa)": mae, "Root Mean Squared Error (MPa)": rmse, "Mean Bias (MPa)": bias}
     return results_df, metrics
 
 @st.cache_data
 def simple_parse(text: str) -> dict:
-    """Regex-based fallback parser."""
     result = {}
     grade_match = re.search(r"\bM\s*([0-9]{1,3})\b", text, re.IGNORECASE)
     if grade_match:
@@ -919,10 +837,6 @@ def simple_parse(text: str) -> dict:
 
 @st.cache_data(show_spinner="🤖 Parsing prompt with LLM...")
 def parse_user_prompt_llm(prompt_text: str) -> dict:
-    """
-    Sends user prompt to LLM and returns structured parameter JSON.
-    Must gracefully handle parsing errors or malformed responses.
-    """
     if not st.session_state.get("llm_enabled", False) or client is None:
         return simple_parse(prompt_text)
 
@@ -967,7 +881,7 @@ def parse_user_prompt_llm(prompt_text: str) -> dict:
         if parsed_json.get("exposure") in CONSTANTS.EXPOSURE_WB_LIMITS:
             cleaned_data["exposure"] = parsed_json["exposure"]
         if parsed_json.get("cement_type") in CONSTANTS.CEMENT_TYPES:
-            cleaned_data["cement_choice"] = parsed_json["cement_type"] # Key rename
+            cleaned_data["cement_choice"] = parsed_json["cement_type"]
         if parsed_json.get("nom_max") in [10, 12.5, 20, 40]:
             cleaned_data["nom_max"] = float(parsed_json["nom_max"])
         if isinstance(parsed_json.get("target_slump"), int):
@@ -995,14 +909,12 @@ def evaluate_mix(components_dict, emissions_df, costs_df=None):
     comp_df = pd.DataFrame(comp_items, columns=["Material", "Quantity (kg/m3)"])
     comp_df["Material_norm"] = comp_df["Material"].apply(_normalize_material_value)
     
-    # Refactored: Use helper to merge emissions
     df = _merge_and_warn(
         comp_df, emissions_df, "CO2_Factor(kg_CO2_per_kg)",
         "warned_emissions", "No emission factors found for"
     )
     df["CO2_Emissions (kg/m3)"] = df["Quantity (kg/m3)"] * df["CO2_Factor(kg_CO2_per_kg)"]
 
-    # Refactored: Use helper to merge costs
     df = _merge_and_warn(
         df, costs_df, "Cost(₹/kg)",
         "warned_costs", "No cost factors found for"
@@ -1022,7 +934,6 @@ def aggregate_correction(delta_moisture_pct: float, agg_mass_ssd: float):
     return float(water_delta), float(corrected_mass)
 
 def aggregate_correction_vectorized(delta_moisture_pct: float, agg_mass_ssd_series: pd.Series):
-    """Vectorized version of aggregate_correction."""
     water_delta_series = (delta_moisture_pct / 100.0) * agg_mass_ssd_series
     corrected_mass_series = agg_mass_ssd_series * (1 + delta_moisture_pct / 100.0)
     return water_delta_series, corrected_mass_series
@@ -1042,7 +953,6 @@ def compute_aggregates(cementitious, water, sp, coarse_agg_fraction, nom_max_mm,
     return float(mass_fine_ssd), float(mass_coarse_ssd)
 
 def compute_aggregates_vectorized(binder_series, water_scalar, sp_series, coarse_agg_frac_series, nom_max_mm, density_fa, density_ca):
-    """Vectorized version of compute_aggregates."""
     vol_cem = binder_series / 3150.0
     vol_wat = water_scalar / 1000.0
     vol_sp = sp_series / 1200.0
@@ -1079,15 +989,12 @@ def compliance_checks(mix_df, meta, exposure):
     except:
         checks["Unit weight 2200–2600 kg/m³"] = False
         
-    # HPC-specific checks
     try:
         sf_frac = float(meta.get("sf_frac", 0.0))
         if sf_frac > 0:
-            # Check SP dosage for silica fume
             sp_frac = float(meta.get("sp", 0)) / float(meta["cementitious"]) if float(meta["cementitious"]) > 0 else 0
             checks["SP ≥ 1.5% for silica fume"] = sp_frac >= 0.015
             
-            # Check fines content for pumpability
             fines_content = float(meta.get("fine", 0)) + float(meta["cementitious"]) * sf_frac
             checks["Fines ≥ 400 kg/m³ for HPC"] = fines_content >= CONSTANTS.HPC_MIN_FINES_CONTENT
     except:
@@ -1131,7 +1038,6 @@ def sanity_check_mix(meta, df):
     if not 1000 <= coarse <= 1300: warnings.append(f"Coarse aggregate quantity ({coarse:.1f} kg/m³) is unusual.")
     if sp > 20: warnings.append(f"Superplasticizer dosage ({sp:.1f} kg/m³) is unusually high.")
     
-    # HPC-specific warnings
     if silica_fume > 0:
         if silica_fume > 50: warnings.append(f"High silica fume content ({silica_fume:.1f} kg/m³). Typically 5-10% of binder.")
         sp_frac = sp / (cement + silica_fume) if (cement + silica_fume) > 0 else 0
@@ -1172,7 +1078,6 @@ def get_compliance_reasons(mix_df, meta, exposure):
     except:
         reasons.append("Failed unit weight check (parsing error)")
         
-    # HPC-specific reasons
     try:
         sf_frac = float(meta.get("sf_frac", 0.0))
         if sf_frac > 0:
@@ -1190,7 +1095,6 @@ def get_compliance_reasons(mix_df, meta, exposure):
     return feasible, "All IS-code checks passed." if feasible else "; ".join(reasons)
 
 def get_compliance_reasons_vectorized(df: pd.DataFrame, exposure: str) -> pd.Series:
-    """Vectorized version of get_compliance_reasons for the optimization grid."""
     limit_wb = CONSTANTS.EXPOSURE_WB_LIMITS[exposure]
     limit_cem = CONSTANTS.EXPOSURE_MIN_CEMENT[exposure]
     
@@ -1213,24 +1117,22 @@ def get_compliance_reasons_vectorized(df: pd.DataFrame, exposure: str) -> pd.Ser
     )
     reasons += np.where(
         ~((df['total_mass'] >= 2200) & (df['total_mass'] <= 2600)),
-        "Unit weight outside range (" + df['total_mass'].round(1).astize(str) + " not in 2200-2600); ",
+        "Unit weight outside range (" + df['total_mass'].round(1).astype(str) + " not in 2200-2600); ",
         ""
     )
     
-    # HPC-specific vectorized reasons
     sf_frac_series = df.get('sf_frac', pd.Series(0.0, index=df.index))
     sp_frac_series = df['sp'] / df['binder'].replace(0, 1)
-    # FIX: Use 'fine_wet' instead of 'fine' - this was the root cause of the KeyError
     fines_content_series = df['fine_wet'] + df['binder'] * sf_frac_series
     
     reasons += np.where(
         (sf_frac_series > 0) & (sp_frac_series < 0.015),
-        "Insufficient SP for silica fume (" + (sp_frac_series * 100).round(1).astize(str) + "% < 1.5%); ",
+        "Insufficient SP for silica fume (" + (sp_frac_series * 100).round(1).astype(str) + "% < 1.5%); ",
         ""
     )
     reasons += np.where(
         (sf_frac_series > 0) & (fines_content_series < CONSTANTS.HPC_MIN_FINES_CONTENT),
-        "Insufficient fines for HPC pumpability (" + fines_content_series.round(0).astize(str) + " kg/m³ < " + str(CONSTANTS.HPC_MIN_FINES_CONTENT) + " kg/m³); ",
+        "Insufficient fines for HPC pumpability (" + fines_content_series.round(0).astype(str) + " kg/m³ < " + str(CONSTANTS.HPC_MIN_FINES_CONTENT) + " kg/m³); ",
         ""
     )
     
@@ -1244,7 +1146,7 @@ def sieve_check_fa(df: pd.DataFrame, zone: str):
     try:
         limits, ok, msgs = CONSTANTS.FINE_AGG_ZONE_LIMITS[zone], True, []
         for sieve, (lo, hi) in limits.items():
-            row = df.loc[df["Sieve_mm"].astize(str) == sieve]
+            row = df.loc[df["Sieve_mm"].astype(str) == sieve]
             if row.empty:
                 ok = False; msgs.append(f"Missing sieve size: {sieve} mm."); continue
             p = float(row["PercentPassing"].iloc[0])
@@ -1258,7 +1160,7 @@ def sieve_check_ca(df: pd.DataFrame, nominal_mm: int):
     try:
         limits, ok, msgs = CONSTANTS.COARSE_LIMITS[int(nominal_mm)], True, []
         for sieve, (lo, hi) in limits.items():
-            row = df.loc[df["Sieve_mm"].astize(str) == sieve]
+            row = df.loc[df["Sieve_mm"].astype(str) == sieve]
             if row.empty:
                 ok = False; msgs.append(f"Missing sieve size: {sieve} mm."); continue
             p = float(row["PercentPassing"].iloc[0])
@@ -1269,18 +1171,13 @@ def sieve_check_ca(df: pd.DataFrame, nominal_mm: int):
 
 @st.cache_data
 def _get_material_factors(materials_list, emissions_df, costs_df):
-    """
-    Pre-computes CO2 and Cost factors for a list of materials to avoid
-    merging DataFrames inside a loop.
-    Returns two dictionaries: co2_factors_dict, cost_factors_dict
-    """
     norm_map = {m: _normalize_material_value(m) for m in materials_list}
     norm_materials = list(set(norm_map.values()))
 
     co2_factors_dict = {}
     if emissions_df is not None and not emissions_df.empty and "CO2_Factor(kg_CO2_per_kg)" in emissions_df.columns:
         emissions_df_norm = emissions_df.copy()
-        emissions_df_norm['Material'] = emissions_df_norm['Material'].astize(str)
+        emissions_df_norm['Material'] = emissions_df_norm['Material'].astype(str)
         emissions_df_norm["Material_norm"] = emissions_df_norm["Material"].apply(_normalize_material_value)
         emissions_df_norm = emissions_df_norm.drop_duplicates(subset=["Material_norm"]).set_index("Material_norm")
         co2_factors_dict = emissions_df_norm["CO2_Factor(kg_CO2_per_kg)"].to_dict()
@@ -1288,7 +1185,7 @@ def _get_material_factors(materials_list, emissions_df, costs_df):
     cost_factors_dict = {}
     if costs_df is not None and not costs_df.empty and "Cost(₹/kg)" in costs_df.columns:
         costs_df_norm = costs_df.copy()
-        costs_df_norm['Material'] = costs_df_norm['Material'].astize(str)
+        costs_df_norm['Material'] = costs_df_norm['Material'].astype(str)
         costs_df_norm["Material_norm"] = costs_df_norm["Material"].apply(_normalize_material_value)
         costs_df_norm = costs_df_norm.drop_duplicates(subset=["Material_norm"]).set_index("Material_norm")
         cost_factors_dict = costs_df_norm["Cost(₹/kg)"].to_dict()
@@ -1311,7 +1208,6 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     if st_progress:
         st_progress.progress(0.0, text="Initializing parameters...")
     
-    # Adjust w/b limits for HPC
     if enable_hpc:
         w_b_limit = min(CONSTANTS.EXPOSURE_WB_LIMITS[exposure], CONSTANTS.HPC_WB_RANGE[1])
         wb_min = max(wb_min, CONSTANTS.HPC_WB_RANGE[0])
@@ -1344,7 +1240,6 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     ]
     co2_factors, cost_factors = _get_material_factors(materials_to_calc, emissions, costs)
 
-    # Check for missing silica fume in library if HPC enabled
     if enable_hpc and CONSTANTS.NORM_SILICA_FUME not in co2_factors:
         st.warning("⚠️ Silica fume not found in materials library. Using placeholder values for HPC calculations.")
         co2_factors[CONSTANTS.NORM_SILICA_FUME] = hpc_options["silica_fume"]["co2_factor"]
@@ -1363,7 +1258,6 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
         grid_params = list(product(wb_values, flyash_options, ggbs_options, silica_fume_options))
         grid_df = pd.DataFrame(grid_params, columns=['wb_input', 'flyash_frac', 'ggbs_frac', 'sf_frac'])
         
-        # Apply HPC constraints
         grid_df = grid_df[grid_df['flyash_frac'] + grid_df['ggbs_frac'] + grid_df['sf_frac'] <= 0.50]
     else:
         grid_params = list(product(wb_values, flyash_options, ggbs_options))
@@ -1371,7 +1265,7 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
         grid_df['sf_frac'] = 0.0
     
     if grid_df.empty:
-        return None, None, [] # No feasible SCM combinations
+        return None, None, []
 
     # --- 4. Vectorized Mix Calculations ---
     if st_progress:
@@ -1379,7 +1273,6 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     
     grid_df['binder_for_strength'] = target_water / grid_df['wb_input']
     
-    # Apply HPC water adjustment
     if enable_hpc:
         grid_df['water_adjusted'] = grid_df.apply(
             lambda row: adjust_water_for_HPC(target_water, row['sf_frac'], hpc_options), axis=1
@@ -1388,7 +1281,7 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     else:
         grid_df['water_adjusted'] = target_water
     
-    # FIX: Broadcast scalars to array shape to prevent ValueError
+    # FIX: Ensure we're working with scalar values, not DataFrames
     grid_df['binder'] = np.maximum(
         np.maximum(grid_df['binder_for_strength'], min_cem_exp),
         min_b_grade
@@ -1402,11 +1295,10 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     grid_df['ggbs'] = grid_df['binder'] * grid_df['ggbs_frac']
     grid_df['silica_fume'] = grid_df['binder'] * grid_df['sf_frac']
     
-    # FIXED: Apply HPC SP adjustment correctly - base_sp should be a Series, not scalar
+    # FIX: Create base_sp as a Series, not scalar
     base_sp_series = (0.01 * grid_df['binder']) if use_sp else pd.Series(0.0, index=grid_df.index)
     
     if enable_hpc:
-        # Apply SP adjustment for HPC using vectorized operations
         sp_multiplier = np.where(
             grid_df['sf_frac'] > 0,
             hpc_options["silica_fume"]["sp_effectiveness_boost"],
@@ -1479,7 +1371,6 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     grid_df['check_scm'] = grid_df['scm_total_frac'] <= 0.50
     grid_df['check_unit_wt'] = (grid_df['total_mass'] >= 2200.0) & (grid_df['total_mass'] <= 2600.0)
     
-    # HPC-specific feasibility checks
     if enable_hpc:
         grid_df['fines_content'] = grid_df['fine_wet'] + grid_df['binder'] * grid_df['sf_frac']
         grid_df['sp_frac'] = grid_df['sp'] / grid_df['binder'].replace(0, 1)
@@ -1511,29 +1402,19 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
         trace_df = grid_df.rename(columns={"w_b": "wb", "cost_total": "cost", "co2_total": "co2"})
         return None, None, trace_df.to_dict('records')
 
-    # --- 8. TWO-STAGE OPTIMIZATION & SELECTION ---
-    # Stage 1: Collect raw metrics from feasible mixes
-    feasible_candidates_df = feasible_candidates_df.copy()
-    
-    # Stage 2: Normalize metrics and compute composite scores for ranking
     if not enable_purpose_optimization or purpose == 'General':
-        # Single-objective optimization (legacy behavior)
         objective_col = 'cost_total' if optimize_cost else 'co2_total'
-        feasible_candidates_df['composite_score'] = np.nan # Not used
+        feasible_candidates_df['composite_score'] = np.nan
         best_idx = feasible_candidates_df[objective_col].idxmin()
     else:
-        # Multi-objective optimization with purpose penalty
-        # Normalize all three objectives
         feasible_candidates_df['norm_co2'] = _minmax_scale(feasible_candidates_df['co2_total'])
         feasible_candidates_df['norm_cost'] = _minmax_scale(feasible_candidates_df['cost_total'])
         feasible_candidates_df['norm_purpose'] = _minmax_scale(feasible_candidates_df['purpose_penalty'])
         
-        # Apply weights from purpose profile
         w_co2 = purpose_weights.get('co2', 0.4)
         w_cost = purpose_weights.get('cost', 0.4)
         w_purpose = purpose_weights.get('purpose', 0.2)
         
-        # Calculate composite score (lower is better)
         feasible_candidates_df['composite_score'] = (
             w_co2 * feasible_candidates_df['norm_co2'] +
             w_cost * feasible_candidates_df['norm_cost'] +
@@ -1557,7 +1438,6 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
         "Coarse Aggregate": best_meta_series['coarse_wet']
     }
     
-    # Add silica fume if used
     if enable_hpc and best_meta_series['sf_frac'] > 0:
         best_mix_dict["Silica Fume"] = best_meta_series['silica_fume']
     
@@ -1602,7 +1482,7 @@ def generate_baseline(grade, exposure, nom_max, target_slump, agg_shape,
     cementitious = min(max(binder_for_wb, min_cem_exp, min_b_grade), max_b_grade)
     actual_wb = water_target / cementitious
     sp = 0.01 * cementitious if use_sp else 0.0
-    coarse_agg_frac = get_coarse_agg_fraction(nom_max, fine_zone, actual_wb) # Use scalar version
+    coarse_agg_frac = get_coarse_agg_fraction(nom_max, fine_zone, actual_wb)
     density_fa, density_ca = material_props['sg_fa'] * 1000, material_props['sg_ca'] * 1000
     
     fine_ssd, coarse_ssd = compute_aggregates(cementitious, water_target, sp, coarse_agg_frac, nom_max, density_fa, density_ca)
@@ -1639,7 +1519,6 @@ def generate_baseline(grade, exposure, nom_max, target_slump, agg_shape,
     return df, meta
 
 def apply_parser(user_text, current_inputs, use_llm_parser=False):
-    """Legacy parser for the old (non-chat) text area."""
     if not user_text.strip(): return current_inputs, [], {}
     try:
         parsed = parse_user_prompt_llm(user_text) if use_llm_parser else simple_parse(user_text)
@@ -1670,7 +1549,6 @@ def apply_parser(user_text, current_inputs, use_llm_parser=False):
 # ==============================================================================
 
 def get_clarification_question(field_name: str) -> str:
-    """Returns a natural language question for a missing parameter."""
     questions = {
         "grade": "What concrete grade do you need (e.g., M20, M25, M30)?",
         "exposure": f"What is the exposure condition? (e.g., {', '.join(CONSTANTS.EXPOSURE_WB_LIMITS.keys())})",
@@ -1815,24 +1693,16 @@ def display_calculation_walkthrough(meta):
 # ==============================================================================
 
 def run_generation_logic(inputs: dict, emissions_df: pd.DataFrame, costs_df: pd.DataFrame, purpose_profiles_data: dict, st_progress=None):
-    """
-    Modular function to run mix generation.
-    It is called by both the chat mode and the manual mode.
-    It sets st.session_state.results upon completion.
-    """
     try:
-        # --- 1. Validate Inputs ---
         min_grade_req = CONSTANTS.EXPOSURE_MIN_GRADE[inputs["exposure"]]
         grade_order = list(CONSTANTS.GRADE_STRENGTH.keys())
         if grade_order.index(inputs["grade"]) < grade_order.index(min_grade_req):
             st.warning(f"For **{inputs['exposure']}** exposure, IS 456 recommends a minimum grade of **{min_grade_req}**. The grade has been automatically updated.", icon="⚠️")
             inputs["grade"] = min_grade_req
-            st.session_state.final_inputs["grade"] = min_grade_req # Update state
+            st.session_state.final_inputs["grade"] = min_grade_req
 
-        # --- 2. Setup Parameters ---
         calibration_kwargs = inputs.get("calibration_kwargs", {})
         
-        # FIX: Remove max_sf_frac from calibration_kwargs if it exists
         if 'max_sf_frac' in calibration_kwargs:
             del calibration_kwargs['max_sf_frac']
         if 'use_hpc_presets' in calibration_kwargs:
@@ -1846,7 +1716,7 @@ def run_generation_logic(inputs: dict, emissions_df: pd.DataFrame, costs_df: pd.
         
         if purpose == 'General': enable_purpose_opt = False
         
-        if st_progress: # Only show info box in manual mode, not chat (where the text shows in chat history)
+        if st_progress:
             if enable_hpc:
                 st.info(f"🧪 Running High Performance Concrete optimization for **{purpose}**.", icon="🔬")
             elif enable_purpose_opt:
@@ -1854,7 +1724,6 @@ def run_generation_logic(inputs: dict, emissions_df: pd.DataFrame, costs_df: pd.
             else:
                 st.info(f"Running single-objective optimization for **{inputs.get('optimize_for', 'CO₂ Emissions')}**.", icon="⚙️")
         
-        # --- 3. Run Generation ---
         fck = CONSTANTS.GRADE_STRENGTH[inputs["grade"]]
         S = CONSTANTS.QC_STDDEV[inputs.get("qc_level", "Good")]
         fck_target = fck + 1.65 * S
@@ -1887,14 +1756,13 @@ def run_generation_logic(inputs: dict, emissions_df: pd.DataFrame, costs_df: pd.
         if st_progress: st_progress.progress(1.0, text="Optimization complete!")
         if st_progress: st_progress.empty()
 
-        # --- 4. Store Results ---
         if opt_df is None or base_df is None:
             st.error("Could not find a feasible mix design with the given constraints. Try adjusting the parameters, such as a higher grade or less restrictive exposure condition.", icon="❌")
             if trace:
                 st.dataframe(pd.DataFrame(trace))
             st.session_state.results = {"success": False, "trace": trace}
         else:
-            if not st.session_state.get("chat_mode", False): # Only show success message in manual mode
+            if not st.session_state.get("chat_mode", False):
                 success_msg = f"Successfully generated mix designs for **{inputs['grade']}** concrete in **{inputs['exposure']}** conditions."
                 if enable_hpc:
                     success_msg += " 🧪 **HPC Mode Enabled**"
@@ -1920,40 +1788,18 @@ def run_generation_logic(inputs: dict, emissions_df: pd.DataFrame, costs_df: pd.
         st.exception(traceback.format_exc())
         st.session_state.results = {"success": False, "trace": None}
 
-
-def display_full_mix_report_from_chat():
-    """
-    Helper function to render the full manual mode report structure when 
-    called from chat mode's button callback, ensuring UI consistency.
-    This function re-uses the rendering logic from the manual interface's 
-    results section (Section 5) but is called in the main loop after a state 
-    switch, forcing the correct display.
-    """
-    # This function is not called directly from the main logic flow in this fixed version.
-    # The fix is to ensure state is set correctly, allowing the main logic's
-    # `run_manual_interface` or the global logic flow to handle the display 
-    # when `st.session_state.chat_mode` is False and `st.session_state.results` exists.
-    # The existing implementation of run_manual_interface handles this correctly 
-    # via the shared 'DISPLAY RESULTS' block.
-    pass
-
-
 # ==============================================================================
 # PART 6: STREAMLIT APP (UI Sub-modules)
 # ==============================================================================
 
 def run_chat_interface(purpose_profiles_data: dict):
-    """Renders the entire Chat Mode UI."""
     st.title("💬 CivilGPT Chat Mode")
     st.markdown("Welcome to the conversational interface. Describe your concrete mix needs, and I'll ask for clarifications.")
     
-    # Display chat history
     for msg in st.session_state.chat_history:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    # --- Display generated results summary in chat ---
-    # This block triggers the display of the summary and the 'Open Full Report' button
     if "results" in st.session_state and st.session_state.results.get("success") and not st.session_state.get("chat_results_displayed", False):
         results = st.session_state.results
         opt_meta, base_meta = results["opt_meta"], results["base_meta"]
@@ -1977,42 +1823,27 @@ def run_chat_interface(purpose_profiles_data: dict):
         
         st.session_state.chat_history.append({"role": "assistant", "content": summary_msg})
         st.session_state.chat_results_displayed = True
-        st.rerun() # Rerun to display the new summary message
+        st.rerun()
 
-    # --- Show "Open Report" button if results are ready (SECOND OCCURRENCE) ---
     if st.session_state.get("chat_results_displayed", False):
         st.info("Your full mix report is ready. You can ask for refinements or open the full report.")
 
-        # === START OF FIX (The core bug fix) ===
-        # The key issue was a race condition and inconsistent state across reruns.
-        # FIX: Ensure all state variables controlling the mode switch AND report rendering
-        # (chat_mode, chat_mode_toggle_functional, active_tab_name, manual_tabs) are set 
-        # in the *same callback* before rerunning. We DO NOT delete 'results'.
         def switch_to_manual_mode():
-            # 1. Update session state for chat mode flag
             st.session_state["chat_mode"] = False
-            # 2. Update session state for sidebar toggle widget key
             st.session_state["chat_mode_toggle_functional"] = False
-            # 3. Set manual tab selection to Overview for active tab
-            #    This ensures the manual UI knows which tab to render immediately.
             st.session_state["active_tab_name"] = "📊 **Overview**"
-            # 4. Also set the manual tabs radio control key so selected index matches immediately
             st.session_state["manual_tabs"] = "📊 **Overview**"  
-            # 5. Clear the chat-specific display flag (now safe as results is preserved)
             st.session_state["chat_results_displayed"] = False  
-            # 6. Call st.rerun() to force immediate UI update
             st.rerun()
 
         st.button(
             "📊 Open Full Mix Report & Switch to Manual Mode",  
             use_container_width=True,  
             type="primary",
-            on_click=switch_to_manual_mode, # Execute state update
+            on_click=switch_to_manual_mode,
             key="switch_to_manual_btn"
         )
-        # === END OF FIX ===
 
-    # --- Handle new user prompt ---
     if user_prompt := st.chat_input("Ask CivilGPT anything about your concrete mix..."):
         st.session_state.chat_history.append({"role": "user", "content": user_prompt})
         
@@ -2031,23 +1862,18 @@ def run_chat_interface(purpose_profiles_data: dict):
             st.session_state.chat_history.append({"role": "assistant", "content": question})
         
         else:
-            # All fields are present! Trigger generation.
             st.session_state.chat_history.append({"role": "assistant", "content": "✅ Great, I have all your requirements. Generating your sustainable mix design now..."})
             st.session_state.run_chat_generation = True
-            st.session_state.chat_results_displayed = False # Reset flag for new results
+            st.session_state.chat_results_displayed = False
             if "results" in st.session_state:
-                del st.session_state.results # Clear old results
+                del st.session_state.results
         
         st.rerun()
 
-
 def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame, emissions_df: pd.DataFrame, costs_df: pd.DataFrame):
-    """Renders the entire original (Manual) UI."""
-    
     st.title("🧱 CivilGPT: Sustainable Concrete Mix Designer")
     st.markdown("##### An AI-powered tool for creating **IS 10262:2019 compliant** concrete mixes, optimized for low carbon footprint.")
 
-    # --- 1. PROMPT INPUT (Original UI) ---
     col1, col2 = st.columns([0.7, 0.3])
     with col1:
         user_text = st.text_area(
@@ -2062,10 +1888,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
         st.write("")
         run_button = st.button("🚀 Generate Mix Design", use_container_width=True, type="primary")
 
-    # --- 2. ADVANCED MANUAL INPUT EXPANDER ---
     with st.expander("⚙️ Advanced Manual Input: Detailed Parameters and Libraries", expanded=False):
-        
-        # --- 2a. CORE MIX PARAMETERS ---
         st.subheader("Core Mix Requirements")
         
         enable_hpc = st.toggle("Enable HPC (M60–M100)", value=False, key="enable_hpc_toggle",
@@ -2089,7 +1912,6 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                 key="cement_choice"
             )
         
-        # HPC Options Section
         if enable_hpc:
             st.markdown("---")
             st.subheader("🧪 High Performance Concrete (HPC) Options")
@@ -2104,11 +1926,12 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                                       disabled=not use_hpc_presets,
                                       help="Minimum water-binder ratio for HPC optimization")
                 
-            # HPC material validation warning
             silica_fume_in_library = False
             if materials_df is not None and not materials_df.empty:
-                material_names = [str(m).lower() for m in materials_df["Material"].astize(str).tolist()]
-                silica_fume_in_library = any("silica fume" in name or "microsilica" in name for name in material_names)
+                # FIX: Safe column access for Material column
+                if "Material" in materials_df.columns:
+                    material_names = [str(m).lower() for m in materials_df["Material"].astype(str).tolist()]
+                    silica_fume_in_library = any("silica fume" in name or "microsilica" in name for name in material_names)
             
             if not silica_fume_in_library:
                 st.warning("⚠️ Silica fume not found in materials library. HPC mixes will use placeholder values for CO₂ and cost factors.", icon="🔬")
@@ -2162,7 +1985,6 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                 w_cost = st.slider("💰 Cost Weight", 0.0, 1.0, default_weights['cost'], 0.05, key="w_cost")
                 w_purpose = st.slider("🛠️ Purpose-Fit Weight", 0.0, 1.0, default_weights['purpose'], 0.05, key="w_purpose")
                 
-                # Safe calculation for normalized weights
                 total_w = w_co2 + w_cost + w_purpose
                 if total_w == 0:
                     st.warning("Weights cannot all be zero. Defaulting to balanced weights.")
@@ -2175,7 +1997,6 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
              enable_purpose_optimization = False
 
         st.markdown("---")
-        # --- 2b. MATERIAL PROPERTIES (MOVED FROM SIDEBAR) ---
         st.subheader("Material Properties (Manual Override)")
         
         sg_fa_default, moisture_fa_default = 2.65, 1.0
@@ -2184,16 +2005,18 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
         if materials_df is not None and not materials_df.empty:
             try:
                 mat_df = materials_df.copy()
-                mat_df['Material'] = mat_df['Material'].str.strip().str.lower()
-                fa_row = mat_df[mat_df['Material'] == CONSTANTS.NORM_FINE_AGG]
-                if not fa_row.empty:
-                    if 'SpecificGravity' in fa_row: sg_fa_default = float(fa_row['SpecificGravity'].iloc[0])
-                    if 'MoistureContent' in fa_row: moisture_fa_default = float(fa_row['MoistureContent'].iloc[0])
-                ca_row = mat_df[mat_df['Material'] == CONSTANTS.NORM_COARSE_AGG]
-                if not ca_row.empty:
-                    if 'SpecificGravity' in ca_row: sg_ca_default = float(ca_row['SpecificGravity'].iloc[0])
-                    if 'MoistureContent' in ca_row: moisture_ca_default = float(ca_row['MoistureContent'].iloc[0])
-                st.info("Material properties auto-loaded from the Shared Library.", icon="📚")
+                # FIX: Safe column access for Material column
+                if "Material" in mat_df.columns:
+                    mat_df['Material'] = mat_df['Material'].str.strip().str.lower()
+                    fa_row = mat_df[mat_df['Material'] == CONSTANTS.NORM_FINE_AGG]
+                    if not fa_row.empty:
+                        if 'SpecificGravity' in fa_row: sg_fa_default = float(fa_row['SpecificGravity'].iloc[0])
+                        if 'MoistureContent' in fa_row: moisture_fa_default = float(fa_row['MoistureContent'].iloc[0])
+                    ca_row = mat_df[mat_df['Material'] == CONSTANTS.NORM_COARSE_AGG]
+                    if not ca_row.empty:
+                        if 'SpecificGravity' in ca_row: sg_ca_default = float(ca_row['SpecificGravity'].iloc[0])
+                        if 'MoistureContent' in ca_row: moisture_ca_default = float(ca_row['MoistureContent'].iloc[0])
+                    st.info("Material properties auto-loaded from the Shared Library.", icon="📚")
             except Exception as e:
                 st.error(f"Failed to parse materials library: {e}")
 
@@ -2220,7 +2043,6 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
             lab_csv = st.file_uploader("Lab Calibration Data CSV", type=["csv"], key="lab_csv", help="CSV with `grade`, `exposure`, `slump`, `nom_max`, `cement_choice`, and `actual_strength` (MPa) columns.")
 
         st.markdown("---")
-        # --- 2c. CALIBRATION & TUNING ---
         with st.expander("Calibration & Tuning (Developer)", expanded=False):
             enable_calibration_overrides = st.checkbox("Enable calibration overrides", False, key="enable_calibration_overrides", help="Override default optimizer search parameters with the values below.")
             c1, c2 = st.columns(2)
@@ -2232,13 +2054,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                 calib_max_flyash_frac = st.slider("Max Fly Ash fraction", 0.0, 0.5, 0.30, 0.05, key="calib_max_flyash_frac", help="Maximum Fly Ash replacement percentage to test.")
                 calib_max_ggbs_frac = st.slider("Max GGBS fraction", 0.0, 0.5, 0.50, 0.05, key="calib_max_ggbs_frac", help="Maximum GGBS replacement percentage to test.")
                 calib_scm_step = st.slider("SCM fraction step (scm_step)", 0.05, 0.25, 0.10, 0.05, key="calib_scm_step", help="Step size for testing different SCM replacement percentages.")
-        
-        # Determine overrides based on expander state (will be re-calculated safely below)
     
-    # --- 3. INPUT PARSING AND GENERATION LOGIC ---
-    
-    # Safe lookup for all required parameters from session state, providing defaults if missing.
-    # This replaces the unsafe 'else' block from the original code.
     grade = st.session_state.get("grade", "M30")
     exposure = st.session_state.get("exposure", "Severe")
     target_slump = st.session_state.get("target_slump", 125)
@@ -2263,7 +2079,6 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
     coarse_csv = st.session_state.get("coarse_csv", None)
     lab_csv = st.session_state.get("lab_csv", None)
 
-    # Calibration parameters also guarded with .get
     enable_calibration_overrides = st.session_state.get("enable_calibration_overrides", False)
     calib_wb_min = st.session_state.get("calib_wb_min", 0.35) if enable_calibration_overrides else 0.35
     calib_wb_steps = st.session_state.get("calib_wb_steps", 6) if enable_calibration_overrides else 6
@@ -2274,17 +2089,14 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
     if calib_fine_fraction == 0.40 and not enable_calibration_overrides:
         calib_fine_fraction = None
     
-    # HPC parameters
     if enable_hpc:
         max_sf_frac = st.session_state.get("max_sf_frac", 0.10)
         use_hpc_presets = st.session_state.get("use_hpc_presets", True)
         hpc_wb_min = st.session_state.get("hpc_wb_min", 0.30)
         
-        # Apply HPC presets to calibration parameters
         if use_hpc_presets:
             calib_wb_min = max(calib_wb_min, hpc_wb_min)
     
-    # Recalculate purpose weights from sliders if needed, using safe .get
     purpose_weights = purpose_profiles_data['General']['weights']
     if enable_purpose_optimization and purpose != 'General':
         w_co2 = st.session_state.get("w_co2", purpose_profiles_data.get(purpose, purpose_profiles_data['General'])['weights']['co2'])
@@ -2317,7 +2129,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
         material_props = {'sg_fa': sg_fa, 'moisture_fa': moisture_fa, 'sg_ca': sg_ca, 'moisture_ca': moisture_ca}
         
         calibration_kwargs = {}
-        if enable_calibration_overrides: # Use the values from the safe lookups above
+        if enable_calibration_overrides:
             calibration_kwargs = {
                 "wb_min": calib_wb_min, "wb_steps": calib_wb_steps,
                 "max_flyash_frac": calib_max_flyash_frac, "max_ggbs_frac": calib_max_ggbs_frac,
@@ -2325,13 +2137,8 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
             }
             st.info("Developer calibration overrides are enabled.", icon="🛠️")
             
-        # HPC-specific calibration - FIXED: Remove max_sf_frac and use_hpc_presets from calibration_kwargs
-        # These parameters are handled separately in the generate_mix function via hpc_options
         if enable_hpc:
-            hpc_calibration = {
-                # Remove max_sf_frac and use_hpc_presets as they are not valid parameters for generate_mix
-                # These are used to configure the HPC options internally
-            }
+            hpc_calibration = {}
             calibration_kwargs.update(hpc_calibration)
             
         inputs = { 
@@ -2367,7 +2174,6 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
             st.session_state.run_generation_manual = True
             st.session_state.final_inputs = inputs
 
-
     if st.session_state.get('clarification_needed', False):
         st.markdown("---")
         st.warning("Your request is missing some details. Please confirm the following to continue.", icon="🤔")
@@ -2394,7 +2200,6 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                 if 'results' in st.session_state: del st.session_state.results
                 st.rerun()
 
-    # --- 4. MANUAL GENERATION LOGIC ---
     if st.session_state.get('run_generation_manual', False):
         st.markdown("---")
         progress_bar = st.progress(0.0, text="Initializing optimization...")
@@ -2405,31 +2210,26 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
             purpose_profiles_data=purpose_profiles_data,
             st_progress=progress_bar
         )
-        st.session_state.run_generation_manual = False # Consume flag
+        st.session_state.run_generation_manual = False
 
-    # --- 5. DISPLAY RESULTS (Common to both modes) ---
     if 'results' in st.session_state and st.session_state.results["success"]:
         results = st.session_state.results
         opt_df, opt_meta = results["opt_df"], results["opt_meta"]
         base_df, base_meta = results["base_df"], results["base_meta"]
         trace, inputs = results["trace"], results["inputs"]
         
-        # --- FIXED TAB NAVIGATION ---
         TAB_NAMES = [
             "📊 **Overview**", "🌱 **Optimized Mix**", "🏗️ **Baseline Mix**",
             "⚖️ **Trade-off Explorer**", "📋 **QA/QC & Gradation**",
             "📥 **Downloads & Reports**", "🔬 **Lab Calibration**"
         ]
         
-        # Initialize tab state if not exists
         if "current_tab" not in st.session_state:
             st.session_state.current_tab = TAB_NAMES[0]
         
-        # Create tab navigation using buttons
         st.markdown("---")
         st.subheader("Mix Report Navigation")
         
-        # Create a row of buttons for tab navigation
         cols = st.columns(len(TAB_NAMES))
         for i, tab_name in enumerate(TAB_NAMES):
             with cols[i]:
@@ -2492,10 +2292,8 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                 feasible_mixes = trace_df[trace_df['feasible']].copy()
 
                 if not feasible_mixes.empty:
-                    # ENHANCED PARETO FRONT WITH PURPOSE_PENALTY
                     pareto_df = pareto_front(feasible_mixes, x_col="cost", y_col="co2", z_col="purpose_penalty")
                     
-                    # Ensure safe default for slider
                     current_alpha = st.session_state.get("pareto_slider_alpha", 0.5)
                     
                     if not pareto_df.empty:
@@ -2506,7 +2304,6 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                             key="pareto_slider_alpha"
                         )
                         
-                        # Normalize all three objectives for composite scoring
                         cost_min, cost_max = pareto_df['cost'].min(), pareto_df['cost'].max()
                         co2_min, co2_max = pareto_df['co2'].min(), pareto_df['co2'].max()
                         penalty_min, penalty_max = pareto_df['purpose_penalty'].min(), pareto_df['purpose_penalty'].max()
@@ -2516,11 +2313,10 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                         pareto_df_norm['norm_co2'] = 0.0 if (co2_max - co2_min) == 0 else (pareto_df_norm['co2'] - co2_min) / (co2_max - co2_min)
                         pareto_df_norm['norm_penalty'] = 0.0 if (penalty_max - penalty_min) == 0 else (pareto_df_norm['purpose_penalty'] - penalty_min) / (penalty_max - penalty_min)
                         
-                        # Calculate composite score with purpose penalty included
                         pareto_df_norm['score'] = (
                             alpha * pareto_df_norm['norm_co2'] + 
                             (1 - alpha) * pareto_df_norm['norm_cost'] +
-                            pareto_df_norm['norm_penalty'] * 0.2  # Fixed weight for purpose penalty
+                            pareto_df_norm['norm_penalty'] * 0.2
                         )
                         best_compromise_mix = pareto_df_norm.loc[pareto_df_norm['score'].idxmin()]
 
@@ -2529,7 +2325,6 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                                   c=feasible_mixes["purpose_penalty"], cmap='viridis', 
                                   alpha=0.5, label='All Feasible Mixes', zorder=1)
                         
-                        # Colorbar for purpose penalty
                         cbar = plt.colorbar(ax.collections[0], ax=ax)
                         cbar.set_label('Purpose Penalty')
                         
@@ -2670,7 +2465,6 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                 ["Composite Score", f"{opt_meta.get('composite_score', 'N/A'):.3f}" if 'composite_score' in opt_meta and not pd.isna(opt_meta['composite_score']) else "N/A", "N/A"],
             ]
             
-            # Add HPC-specific data if enabled
             if opt_meta.get("enable_hpc", False):
                 summary_data.insert(5, ["Silica Fume (kg/m³)", f"{opt_meta.get('silica_fume', 0):.1f}", "N/A"])
                 summary_data.insert(6, ["Silica Fume %", f"{opt_meta.get('sf_frac', 0)*100:.1f}%", "N/A"])
@@ -2733,7 +2527,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                 st.info("Upload a lab data CSV in the **Advanced Manual Input** section to automatically compare CivilGPT's target strength calculations against your real-world results.", icon="ℹ️")
         
     elif 'results' in st.session_state and not st.session_state.results["success"]:
-        pass # Error message was already shown
+        pass
     elif not st.session_state.get('clarification_needed'):
         st.info("Enter your concrete requirements in the prompt box above, or expand the **Advanced Manual Input** section to specify parameters.", icon="👆")
         st.markdown("---")
@@ -2757,7 +2551,6 @@ def main():
         layout="wide"
     )
 
-    # Custom CSS for dark theme and switch card
     st.markdown("""
     <style>
         .main .block-container {
@@ -2776,9 +2569,8 @@ def main():
         [data-testid="chat-message-container"] [data-testid="stMarkdown"] p {
             line-height: 1.6;
         }
-        /* Style for the Mode Switch Card */
         .mode-card {
-            background-color: #1E1E1E; /* Dark background */
+            background-color: #1E1E1E;
             border-radius: 8px;
             padding: 15px;
             margin-bottom: 10px;
@@ -2791,23 +2583,21 @@ def main():
             border-color: #4A90E2;
         }
         .mode-card h4 {
-            color: #FFFFFF; /* White text */
+            color: #FFFFFF;
             margin-top: 0;
             margin-bottom: 5px;
         }
         .mode-card p {
-            color: #CCCCCC; /* Light gray text */
+            color: #CCCCCC;
             font-size: 0.85em;
             margin-bottom: 10px;
         }
-        /* Custom spacing for sidebar */
         [data-testid="stSidebarContent"] > div:first-child {
             padding-bottom: 0rem;
         }
     </style>
     """, unsafe_allow_html=True)
 
-    # --- 1. STATE INITIALIZATION ---
     if "chat_mode" not in st.session_state:
         st.session_state.chat_mode = False
     
@@ -2825,7 +2615,6 @@ def main():
         
     purpose_profiles_data = load_purpose_profiles()
 
-    # --- 2. SIDEBAR SETUP (COMMON ELEMENTS) ---
     st.sidebar.title("Mode Selection")
 
     if "llm_init_message" in st.session_state:
@@ -2836,10 +2625,8 @@ def main():
 
     llm_is_ready = st.session_state.get("llm_enabled", False)
     
-    # NEW: Redesigned Chat Mode Switch Card
     with st.sidebar:
         
-        # Determine the current mode and helper text
         if st.session_state.chat_mode:
             card_title = "🤖 CivilGPT Chat Mode"
             card_desc = "Converse with the AI to define mix requirements."
@@ -2851,7 +2638,6 @@ def main():
             card_icon = "📝"
             is_chat_mode = False
 
-        # Build the card with toggle
         st.markdown(f"""
         <div class="mode-card">
             <h4 style='display: flex; align-items: center;'>
@@ -2862,19 +2648,16 @@ def main():
         </div>
         """, unsafe_allow_html=True)
         
-        # The actual Streamlit toggle for functionality
-        # The toggle must read from the session state key "chat_mode" and use the key "chat_mode_toggle_functional"
         chat_mode = st.toggle(
             f"Switch to {'Manual' if is_chat_mode else 'Chat'} Mode",
-            value=st.session_state.get("chat_mode") if llm_is_ready else False, # Ensure we read from the core state variable
+            value=st.session_state.get("chat_mode") if llm_is_ready else False,
             key="chat_mode_toggle_functional",
             help="Toggle to switch between conversational and manual input interfaces." if llm_is_ready else "Chat Mode requires a valid GROQ_API_KEY.",
             disabled=not llm_is_ready,
-            label_visibility="collapsed" # Hide the label as the card provides context
+            label_visibility="collapsed"
         )
         st.session_state.chat_mode = chat_mode
         
-        # Move the LLM parser toggle into the sidebar if we're in manual mode, for easy access
         if not chat_mode and llm_is_ready:
              st.markdown("---")
              st.checkbox(
@@ -2882,7 +2665,6 @@ def main():
                  value=False, key="use_llm_parser",
                  help="Use the LLM to automatically extract parameters from the text area above."
               )
-
 
     if chat_mode:
         if st.sidebar.button("🧹 Clear Chat History", use_container_width=True):
@@ -2894,18 +2676,14 @@ def main():
             st.rerun()
         st.sidebar.markdown("---")
 
-    # The file uploaders are now inside the Advanced Manual Input expander in run_manual_interface.
-    # We must call load_data here (before either interface is run) to ensure the DFs are available.
     materials_df, emissions_df, costs_df = load_data(
         st.session_state.get("materials_csv"), 
         st.session_state.get("emissions_csv"), 
         st.session_state.get("cost_csv")
     )
 
-
-    # --- 3. CHAT-TRIGGERED GENERATION (RUNS BEFORE UI) ---
     if st.session_state.get('run_chat_generation', False):
-        st.session_state.run_chat_generation = False # Consume flag
+        st.session_state.run_chat_generation = False
         
         chat_inputs = st.session_state.chat_inputs
         default_material_props = {'sg_fa': 2.65, 'moisture_fa': 1.0, 'sg_ca': 2.70, 'moisture_ca': 0.5}
@@ -2918,8 +2696,8 @@ def main():
             "purpose": "General", "enable_purpose_optimization": False,
             "purpose_weights": purpose_profiles_data['General']['weights'],
             "optimize_for": "CO₂ Emissions",
-            "calibration_kwargs": {}, # No calibration in chat mode
-            **chat_inputs # Override defaults with chat values
+            "calibration_kwargs": {},
+            **chat_inputs
         }
         
         inputs["optimize_cost"] = (inputs.get("optimize_for") == "Cost")
@@ -2935,15 +2713,13 @@ def main():
                 emissions_df=emissions_df,
                 costs_df=costs_df,
                 purpose_profiles_data=purpose_profiles_data,
-                st_progress=None # No progress bar in chat
+                st_progress=None
             )
 
-    # --- 4. RENDER UI (Chat or Manual) ---
     if chat_mode:
         run_chat_interface(purpose_profiles_data)
     else:
         run_manual_interface(purpose_profiles_data, materials_df, emissions_df, costs_df)
-
 
 if __name__ == "__main__":
     main()
