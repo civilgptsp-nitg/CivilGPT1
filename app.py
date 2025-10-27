@@ -473,13 +473,21 @@ def compute_purpose_penalty(candidate_meta: dict, purpose_profile: dict) -> floa
         max_sp_frac = purpose_profile.get('max_sp_frac', 0.03)
         current_sp_frac = float(candidate_meta.get('sp', 0)) / current_binder if current_binder > 0 else 0
         
+        # CHANGE 1: Dynamic priority-based scaling for w/b penalty
+        strength_weight = CONSTANTS.PRIORITY_WEIGHTS[purpose_profile['strength_priority']]
         if current_wb > wb_limit:
             excess_wb = current_wb - wb_limit
-            penalty += excess_wb * 2000
+            penalty += excess_wb * 2000 * strength_weight
         
+        # CHANGE 2: Graduated penalty scaling for SCM excess
         if current_scm > scm_limit:
             excess_scm = current_scm - scm_limit
-            penalty += excess_scm * 500
+            if excess_scm <= 0.05:
+                penalty += excess_scm * 200  # Minor violation
+            elif excess_scm <= 0.10:
+                penalty += excess_scm * 500  # Moderate violation  
+            else:
+                penalty += excess_scm * 1000  # Severe violation
         
         if current_binder < min_binder:
             deficit_binder = min_binder - current_binder
@@ -577,9 +585,19 @@ def compute_purpose_penalty_vectorized(df: pd.DataFrame, purpose_profile: dict) 
     cost_weight = CONSTANTS.PRIORITY_WEIGHTS.get(cost_priority, 0.6)
     sustainability_weight = CONSTANTS.PRIORITY_WEIGHTS.get(sustainability_priority, 0.6)
     
-    penalty += (df['w_b'] - wb_limit).clip(lower=0) * 2000
+    # CHANGE 1: Dynamic priority-based scaling for w/b penalty
+    penalty += (df['w_b'] - wb_limit).clip(lower=0) * 2000 * strength_weight
     
-    penalty += (df['scm_total_frac'] - scm_limit).clip(lower=0) * 500
+    # CHANGE 2: Graduated penalty scaling for SCM excess
+    excess_scm = (df['scm_total_frac'] - scm_limit).clip(lower=0)
+    scm_penalty = np.where(
+        excess_scm <= 0.05, excess_scm * 200,
+        np.where(
+            excess_scm <= 0.10, excess_scm * 500,
+            excess_scm * 1000
+        )
+    )
+    penalty += scm_penalty
     
     penalty += (min_binder - df['binder']).clip(lower=0) * 2
     penalty += (df['binder'] - max_binder).clip(lower=0) * 0.5
@@ -602,6 +620,21 @@ def compute_purpose_penalty_vectorized(df: pd.DataFrame, purpose_profile: dict) 
     penalty += ((0.015 - sp_frac_series).clip(lower=0) * 2000 * (sf_frac_series > 0))
     penalty += ((df['w_b'] - 0.40).clip(lower=0) * 1000 * (sf_frac_series > 0))
     penalty += ((400 - fines_content_series).clip(lower=0) * 0.5 * (sf_frac_series > 0))
+    
+    # CHANGE 3: SCM Type Preference Enforcement
+    preferred_scm = purpose_profile.get('preferred_scm_types', [])
+    if len(preferred_scm) > 0:
+        # Check for non-preferred SCM types being used
+        uses_non_preferred = pd.Series(False, index=df.index)
+        
+        if 'flyash' not in preferred_scm:
+            uses_non_preferred |= (df['flyash_frac'] > 0)
+        if 'ggbs' not in preferred_scm:
+            uses_non_preferred |= (df['ggbs_frac'] > 0)
+        if 'silica_fume' not in preferred_scm:
+            uses_non_preferred |= (df['sf_frac'] > 0)
+            
+        penalty += uses_non_preferred * 200  # Penalty for using non-preferred SCM types
     
     if 'fck_target' not in df.columns and 'grade' in df.columns:
         try:
@@ -1160,7 +1193,7 @@ def sieve_check_ca(df: pd.DataFrame, nominal_mm: int):
     try:
         limits, ok, msgs = CONSTANTS.COARSE_LIMITS[int(nominal_mm)], True, []
         for sieve, (lo, hi) in limits.items():
-            row = df.loc[df["Sieve_mm"].astype(str) == sieve]
+            row = df.loc[df["Sieve_mm"].astize(str) == sieve]
             if row.empty:
                 ok = False; msgs.append(f"Missing sieve size: {sieve} mm."); continue
             p = float(row["PercentPassing"].iloc[0])
@@ -1185,7 +1218,7 @@ def _get_material_factors(materials_list, emissions_df, costs_df):
     cost_factors_dict = {}
     if costs_df is not None and not costs_df.empty and "Cost(₹/kg)" in costs_df.columns:
         costs_df_norm = costs_df.copy()
-        costs_df_norm['Material'] = costs_df_norm['Material'].astype(str)
+        costs_df_norm['Material'] = costs_df_norm['Material'].astize(str)
         costs_df_norm["Material_norm"] = costs_df_norm["Material"].apply(_normalize_material_value)
         costs_df_norm = costs_df_norm.drop_duplicates(subset=["Material_norm"]).set_index("Material_norm")
         cost_factors_dict = costs_df_norm["Cost(₹/kg)"].to_dict()
@@ -2558,7 +2591,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                 st.download_button("📈 Download Excel Report", data=excel_buffer.getvalue(), file_name="CivilGPT_Mix_Designs.xlsx", mime="application/vnd.ms-excel", use_container_width=True)
             with d2:
                 st.download_button("✔️ Optimized Mix (CSV)", data=opt_df.to_csv(index=False).encode("utf-8"), file_name="optimized_mix.csv", mime="text/csv", use_container_width=True)
-                st.download_button("✖️ Baseline Mix (CSV)", data=base_df.to_csv(index=False).encode("utf-8"), file_name="baseline_mix.csv", mime="text/csv", use_container_width=True)
+                st.download_button("✖️ Baseline Mix (CSV)", data=base_df.to_csv(index=False).encode("utf-8)", file_name="baseline_mix.csv", mime="text/csv", use_container_width=True)
 
         elif selected_tab == "🔬 **Lab Calibration**":
             st.header("🔬 Lab Calibration Analysis")
