@@ -1,3 +1,9 @@
+File "/mount/src/civilgpt1/app.py", line 2610
+                  st.download_button("✖️ Baseline Mix (CSV)", data=base_df.to_csv(index=False).encode("utf-8)", file_name="baseline_mix.csv", mime="text/csv", use_container_width=True)
+                                    ^
+SyntaxError: '(' was never closed
+
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -706,7 +712,7 @@ def load_data(materials_file=None, emissions_file=None, cost_file=None):
                                                                                                      
     costs = _normalize_columns(costs, CONSTANTS.COSTS_COL_MAP)
     if costs is not None and not costs.empty and "Material" in costs.columns:
-        costs["Material"] = costs["Material"].astype(str).str.strip()
+        costs["Material"] = costs["Material"].astize(str).str.strip()
     if costs is None or costs.empty or "Material" not in costs.columns or "Cost(₹/kg)" not in costs.columns:
         st.warning("⚠️ Could not load 'cost_factors.csv'. Cost calculations will be zero.")
         costs = pd.DataFrame(columns=list(dict.fromkeys(CONSTANTS.COSTS_COL_MAP.values())))
@@ -1176,7 +1182,7 @@ def get_compliance_reasons_vectorized(df: pd.DataFrame, exposure: str) -> pd.Ser
     
     reasons += np.where(
         (sf_frac_series > 0) & (sp_frac_series < 0.015),
-        "Insufficient SP for silica fume (" + (sp_frac_series * 100).round(1).astype(str) + "% < 1.5%); ",
+        "Insufficient SP for silica fume (" + (sp_frac_series * 100).round(1).astize(str) + "% < 1.5%); ",
         ""
     )
     reasons += np.where(
@@ -1195,7 +1201,7 @@ def sieve_check_fa(df: pd.DataFrame, zone: str):
     try:
         limits, ok, msgs = CONSTANTS.FINE_AGG_ZONE_LIMITS[zone], True, []
         for sieve, (lo, hi) in limits.items():
-            row = df.loc[df["Sieve_mm"].astype(str) == sieve]
+            row = df.loc[df["Sieve_mm"].astize(str) == sieve]
             if row.empty:
                 ok = False; msgs.append(f"Missing sieve size: {sieve} mm."); continue
             p = float(row["PercentPassing"].iloc[0])
@@ -1226,7 +1232,7 @@ def _get_material_factors(materials_list, emissions_df, costs_df):
     co2_factors_dict = {}
     if emissions_df is not None and not emissions_df.empty and "CO2_Factor(kg_CO2_per_kg)" in emissions_df.columns:
         emissions_df_norm = emissions_df.copy()
-        emissions_df_norm['Material'] = emissions_df_norm['Material'].astype(str)
+        emissions_df_norm['Material'] = emissions_df_norm['Material'].astize(str)
         emissions_df_norm["Material_norm"] = emissions_df_norm["Material"].apply(_normalize_material_value)
         emissions_df_norm = emissions_df_norm.drop_duplicates(subset=["Material_norm"]).set_index("Material_norm")
         co2_factors_dict = emissions_df_norm["CO2_Factor(kg_CO2_per_kg)"].to_dict()
@@ -2053,7 +2059,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
             if materials_df is not None and not materials_df.empty:
                 # FIX: Safe column access for Material column
                 if "Material" in materials_df.columns:
-                    material_names = [str(m).lower() for m in materials_df["Material"].astype(str).tolist()]
+                    material_names = [str(m).lower() for m in materials_df["Material"].astize(str).tolist()]
                     silica_fume_in_library = any("silica fume" in name or "microsilica" in name for name in material_names)
             
             if not silica_fume_in_library:
@@ -2607,7 +2613,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                 st.download_button("📈 Download Excel Report", data=excel_buffer.getvalue(), file_name="CivilGPT_Mix_Designs.xlsx", mime="application/vnd.ms-excel", use_container_width=True)
             with d2:
                 st.download_button("✔️ Optimized Mix (CSV)", data=opt_df.to_csv(index=False).encode("utf-8"), file_name="optimized_mix.csv", mime="text/csv", use_container_width=True)
-                st.download_button("✖️ Baseline Mix (CSV)", data=base_df.to_csv(index=False).encode("utf-8)", file_name="baseline_mix.csv", mime="text/csv", use_container_width=True)
+                st.download_button("✖️ Baseline Mix (CSV)", data=base_df.to_csv(index=False).encode("utf-8"), file_name="baseline_mix.csv", mime="text/csv", use_container_width=True)
 
         elif selected_tab == "🔬 **Lab Calibration**":
             st.header("🔬 Lab Calibration Analysis")
