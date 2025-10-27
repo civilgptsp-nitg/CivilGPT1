@@ -2621,7 +2621,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                 st.download_button("📈 Download Excel Report", data=excel_buffer.getvalue(), file_name="CivilGPT_Mix_Designs.xlsx", mime="application/vnd.ms-excel", use_container_width=True)
             with d2:
                 st.download_button("✔️ Optimized Mix (CSV)", data=opt_df.to_csv(index=False).encode("utf-8"), file_name="optimized_mix.csv", mime="text/csv", use_container_width=True)
-                st.download_button("✖️ Baseline Mix (CSV)", data=base_df.to_csv(index=False).encode("utf-8)", file_name="baseline_mix.csv", mime="text/csv", use_container_width=True)
+                st.download_button("✖️ Baseline Mix (CSV)", data=base_df.to_csv(index=False).encode("utf-8"), file_name="baseline_mix.csv", mime="text/csv", use_container_width=True)
 
         elif selected_tab == "🔬 **Lab Calibration**":
             st.header("🔬 Lab Calibration Analysis")
