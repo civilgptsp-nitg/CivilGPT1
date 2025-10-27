@@ -473,13 +473,21 @@ def compute_purpose_penalty(candidate_meta: dict, purpose_profile: dict) -> floa
         max_sp_frac = purpose_profile.get('max_sp_frac', 0.03)
         current_sp_frac = float(candidate_meta.get('sp', 0)) / current_binder if current_binder > 0 else 0
         
+        # CHANGE 1: Dynamic priority-based scaling for w/b penalty
+        strength_weight = CONSTANTS.PRIORITY_WEIGHTS[purpose_profile['strength_priority']]
         if current_wb > wb_limit:
             excess_wb = current_wb - wb_limit
-            penalty += excess_wb * 2000
+            penalty += excess_wb * 2000 * strength_weight
         
+        # CHANGE 2: Graduated penalty scaling for SCM excess
         if current_scm > scm_limit:
             excess_scm = current_scm - scm_limit
-            penalty += excess_scm * 500
+            if excess_scm <= 0.05:
+                penalty += excess_scm * 200  # Minor violation
+            elif excess_scm <= 0.10:
+                penalty += excess_scm * 500  # Moderate violation  
+            else:
+                penalty += excess_scm * 1000  # Severe violation
         
         if current_binder < min_binder:
             deficit_binder = min_binder - current_binder
@@ -577,9 +585,19 @@ def compute_purpose_penalty_vectorized(df: pd.DataFrame, purpose_profile: dict) 
     cost_weight = CONSTANTS.PRIORITY_WEIGHTS.get(cost_priority, 0.6)
     sustainability_weight = CONSTANTS.PRIORITY_WEIGHTS.get(sustainability_priority, 0.6)
     
-    penalty += (df['w_b'] - wb_limit).clip(lower=0) * 2000
+    # CHANGE 1: Dynamic priority-based scaling for w/b penalty
+    penalty += (df['w_b'] - wb_limit).clip(lower=0) * 2000 * strength_weight
     
-    penalty += (df['scm_total_frac'] - scm_limit).clip(lower=0) * 500
+    # CHANGE 2: Graduated penalty scaling for SCM excess
+    excess_scm = (df['scm_total_frac'] - scm_limit).clip(lower=0)
+    scm_penalty = np.where(
+        excess_scm <= 0.05, excess_scm * 200,
+        np.where(
+            excess_scm <= 0.10, excess_scm * 500,
+            excess_scm * 1000
+        )
+    )
+    penalty += scm_penalty
     
     penalty += (min_binder - df['binder']).clip(lower=0) * 2
     penalty += (df['binder'] - max_binder).clip(lower=0) * 0.5
@@ -602,6 +620,21 @@ def compute_purpose_penalty_vectorized(df: pd.DataFrame, purpose_profile: dict) 
     penalty += ((0.015 - sp_frac_series).clip(lower=0) * 2000 * (sf_frac_series > 0))
     penalty += ((df['w_b'] - 0.40).clip(lower=0) * 1000 * (sf_frac_series > 0))
     penalty += ((400 - fines_content_series).clip(lower=0) * 0.5 * (sf_frac_series > 0))
+    
+    # CHANGE 3: SCM Type Preference Enforcement
+    preferred_scm = purpose_profile.get('preferred_scm_types', [])
+    if len(preferred_scm) > 0:
+        # Check for non-preferred SCM types being used
+        uses_non_preferred = pd.Series(False, index=df.index)
+        
+        if 'flyash' not in preferred_scm:
+            uses_non_preferred |= (df['flyash_frac'] > 0)
+        if 'ggbs' not in preferred_scm:
+            uses_non_preferred |= (df['ggbs_frac'] > 0)
+        if 'silica_fume' not in preferred_scm:
+            uses_non_preferred |= (df['sf_frac'] > 0)
+            
+        penalty += uses_non_preferred * 200  # Penalty for using non-preferred SCM types
     
     if 'fck_target' not in df.columns and 'grade' in df.columns:
         try:
@@ -796,7 +829,6 @@ def run_lab_calibration(lab_df):
     metrics = {"Mean Absolute Error (MPa)": mae, "Root Mean Squared Error (MPa)": rmse, "Mean Bias (MPa)": bias}
     return results_df, metrics
 
-@st.cache_data
 def simple_parse(text: str) -> dict:
     result = {}
     grade_match = re.search(r"\bM\s*([0-9]{1,3})\b", text, re.IGNORECASE)
@@ -863,8 +895,9 @@ def parse_user_prompt_llm(prompt_text: str) -> dict:
     """
     
     try:
+        # Primary model attempt
         resp = client.chat.completions.create(
-            model="mixtral-8x7b-32768",
+            model="llama3-70b-8192",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt_text}
@@ -875,30 +908,46 @@ def parse_user_prompt_llm(prompt_text: str) -> dict:
         content = resp.choices[0].message.content
         parsed_json = json.loads(content)
         
-        cleaned_data = {}
-        if parsed_json.get("grade") in CONSTANTS.GRADE_STRENGTH:
-            cleaned_data["grade"] = parsed_json["grade"]
-        if parsed_json.get("exposure") in CONSTANTS.EXPOSURE_WB_LIMITS:
-            cleaned_data["exposure"] = parsed_json["exposure"]
-        if parsed_json.get("cement_type") in CONSTANTS.CEMENT_TYPES:
-            cleaned_data["cement_choice"] = parsed_json["cement_type"]
-        if parsed_json.get("nom_max") in [10, 12.5, 20, 40]:
-            cleaned_data["nom_max"] = float(parsed_json["nom_max"])
-        if isinstance(parsed_json.get("target_slump"), int):
-            cleaned_data["target_slump"] = max(25, min(180, parsed_json["target_slump"]))
-        if parsed_json.get("purpose") in CONSTANTS.PURPOSE_PROFILES:
-            cleaned_data["purpose"] = parsed_json["purpose"]
-        if parsed_json.get("optimize_for") in ["CO2", "Cost"]:
-            cleaned_data["optimize_for"] = parsed_json["optimize_for"]
-        if isinstance(parsed_json.get("use_superplasticizer"), bool):
-            cleaned_data["use_sp"] = parsed_json["use_superplasticizer"]
-        if isinstance(parsed_json.get("enable_hpc"), bool):
-            cleaned_data["enable_hpc"] = parsed_json["enable_hpc"]
-        
-        return cleaned_data
     except Exception as e:
-        st.error(f"LLM Parser Error: {e}. Falling back to regex.")
-        return simple_parse(prompt_text)
+        st.warning(f"Primary model (llama3-70b-8192) failed: {e}. Trying fallback model...")
+        try:
+            # Fallback model attempt
+            resp = client.chat.completions.create(
+                model="gemma2-9b-it",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt_text}
+                ],
+                temperature=0.0,
+                response_format={"type": "json_object"},
+            )
+            content = resp.choices[0].message.content
+            parsed_json = json.loads(content)
+        except Exception as e2:
+            st.error(f"LLM Parser Error with fallback model: {e2}. Falling back to regex.")
+            return simple_parse(prompt_text)
+    
+    cleaned_data = {}
+    if parsed_json.get("grade") in CONSTANTS.GRADE_STRENGTH:
+        cleaned_data["grade"] = parsed_json["grade"]
+    if parsed_json.get("exposure") in CONSTANTS.EXPOSURE_WB_LIMITS:
+        cleaned_data["exposure"] = parsed_json["exposure"]
+    if parsed_json.get("cement_type") in CONSTANTS.CEMENT_TYPES:
+        cleaned_data["cement_choice"] = parsed_json["cement_type"]
+    if parsed_json.get("nom_max") in [10, 12.5, 20, 40]:
+        cleaned_data["nom_max"] = float(parsed_json["nom_max"])
+    if isinstance(parsed_json.get("target_slump"), int):
+        cleaned_data["target_slump"] = max(25, min(180, parsed_json["target_slump"]))
+    if parsed_json.get("purpose") in CONSTANTS.PURPOSE_PROFILES:
+        cleaned_data["purpose"] = parsed_json["purpose"]
+    if parsed_json.get("optimize_for") in ["CO2", "Cost"]:
+        cleaned_data["optimize_for"] = parsed_json["optimize_for"]
+    if isinstance(parsed_json.get("use_superplasticizer"), bool):
+        cleaned_data["use_sp"] = parsed_json["use_superplasticizer"]
+    if isinstance(parsed_json.get("enable_hpc"), bool):
+        cleaned_data["enable_hpc"] = parsed_json["enable_hpc"]
+    
+    return cleaned_data
 
 # ==============================================================================
 # PART 3: CORE MIX GENERATION & EVALUATION
@@ -1117,7 +1166,7 @@ def get_compliance_reasons_vectorized(df: pd.DataFrame, exposure: str) -> pd.Ser
     )
     reasons += np.where(
         ~((df['total_mass'] >= 2200) & (df['total_mass'] <= 2600)),
-        "Unit weight outside range (" + df['total_mass'].round(1).astype(str) + " not in 2200-2600); ",
+        "Unit weight outside range (" + df['total_mass'].round(1).astize(str) + " not in 2200-2600); ",
         ""
     )
     
@@ -1132,7 +1181,7 @@ def get_compliance_reasons_vectorized(df: pd.DataFrame, exposure: str) -> pd.Ser
     )
     reasons += np.where(
         (sf_frac_series > 0) & (fines_content_series < CONSTANTS.HPC_MIN_FINES_CONTENT),
-        "Insufficient fines for HPC pumpability (" + fines_content_series.round(0).astype(str) + " kg/m³ < " + str(CONSTANTS.HPC_MIN_FINES_CONTENT) + " kg/m³); ",
+        "Insufficient fines for HPC pumpability (" + fines_content_series.round(0).astize(str) + " kg/m³ < " + str(CONSTANTS.HPC_MIN_FINES_CONTENT) + " kg/m³); ",
         ""
     )
     
@@ -1160,7 +1209,7 @@ def sieve_check_ca(df: pd.DataFrame, nominal_mm: int):
     try:
         limits, ok, msgs = CONSTANTS.COARSE_LIMITS[int(nominal_mm)], True, []
         for sieve, (lo, hi) in limits.items():
-            row = df.loc[df["Sieve_mm"].astype(str) == sieve]
+            row = df.loc[df["Sieve_mm"].astize(str) == sieve]
             if row.empty:
                 ok = False; msgs.append(f"Missing sieve size: {sieve} mm."); continue
             p = float(row["PercentPassing"].iloc[0])
@@ -1185,7 +1234,7 @@ def _get_material_factors(materials_list, emissions_df, costs_df):
     cost_factors_dict = {}
     if costs_df is not None and not costs_df.empty and "Cost(₹/kg)" in costs_df.columns:
         costs_df_norm = costs_df.copy()
-        costs_df_norm['Material'] = costs_df_norm['Material'].astype(str)
+        costs_df_norm['Material'] = costs_df_norm['Material'].astize(str)
         costs_df_norm["Material_norm"] = costs_df_norm["Material"].apply(_normalize_material_value)
         costs_df_norm = costs_df_norm.drop_duplicates(subset=["Material_norm"]).set_index("Material_norm")
         cost_factors_dict = costs_df_norm["Cost(₹/kg)"].to_dict()
@@ -2558,7 +2607,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                 st.download_button("📈 Download Excel Report", data=excel_buffer.getvalue(), file_name="CivilGPT_Mix_Designs.xlsx", mime="application/vnd.ms-excel", use_container_width=True)
             with d2:
                 st.download_button("✔️ Optimized Mix (CSV)", data=opt_df.to_csv(index=False).encode("utf-8"), file_name="optimized_mix.csv", mime="text/csv", use_container_width=True)
-                st.download_button("✖️ Baseline Mix (CSV)", data=base_df.to_csv(index=False).encode("utf-8"), file_name="baseline_mix.csv", mime="text/csv", use_container_width=True)
+                st.download_button("✖️ Baseline Mix (CSV)", data=base_df.to_csv(index=False).encode("utf-8)", file_name="baseline_mix.csv", mime="text/csv", use_container_width=True)
 
         elif selected_tab == "🔬 **Lab Calibration**":
             st.header("🔬 Lab Calibration Analysis")
