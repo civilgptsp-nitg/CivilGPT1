@@ -219,7 +219,7 @@ class CONSTANTS:
     
     HPC_WB_RANGE = (0.25, 0.40)
     HPC_MIN_BINDER_STRENGTH = 60
-    HPC_SP_MAX_LIMIT = 0.03
+    HPC_SP_MAX_LIMIT = 0.05  # Increased from 0.03 to 0.05 for HPC flexibility
     HPC_MIN_FINES_CONTENT = 400
     
     CEMENT_TYPES = ["OPC 33", "OPC 43", "OPC 53", "PPC"]
@@ -945,7 +945,7 @@ def compute_aggregates(cementitious, water, sp, coarse_agg_fraction, nom_max_mm,
     vol_air = CONSTANTS.ENTRAPPED_AIR_VOL.get(int(nom_max_mm), 0.01)
     vol_paste_and_air = vol_cem + vol_wat + vol_sp + vol_air
     vol_agg = 1.0 - vol_paste_and_air
-    if vol_agg <= 0: vol_agg = 0.60
+    if vol_agg <= 0: vol_agg = 0.55  # Reduced from 0.60 to 0.55 for HPC mixes with higher paste volume
     vol_coarse = vol_agg * coarse_agg_fraction
     vol_fine = vol_agg * (1.0 - coarse_agg_fraction)
     mass_fine_ssd = vol_fine * density_fa
@@ -959,7 +959,7 @@ def compute_aggregates_vectorized(binder_series, water_scalar, sp_series, coarse
     vol_air = CONSTANTS.ENTRAPPED_AIR_VOL.get(int(nom_max_mm), 0.01)
     
     vol_paste_and_air = vol_cem + vol_wat + vol_sp + vol_air
-    vol_agg = (1.0 - vol_paste_and_air).clip(lower=0.60)
+    vol_agg = (1.0 - vol_paste_and_air).clip(lower=0.55)  # Reduced from 0.60 to 0.55 for HPC mixes
     
     vol_coarse = vol_agg * coarse_agg_frac_series
     vol_fine = vol_agg * (1.0 - coarse_agg_frac_series)
@@ -1253,16 +1253,32 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     flyash_options = np.arange(0.0, max_flyash_frac + 1e-9, scm_step)
     ggbs_options = np.arange(0.0, max_ggbs_frac + 1e-9, scm_step)
     
-    if enable_hpc:
+    # CRITICAL FIX: Add SP fraction as search dimension for HPC mixes
+    if enable_hpc and use_sp:
+        # For HPC with silica fume, SP fractions should start from 0.015 (1.5%) up to HPC_SP_MAX_LIMIT
+        sp_frac_options = np.arange(0.015, CONSTANTS.HPC_SP_MAX_LIMIT + 1e-9, min(scm_step, 0.005))
+        silica_fume_options = np.arange(0.0, hpc_options["silica_fume"]["max_frac"] + 1e-9, scm_step/2)
+        grid_params = list(product(wb_values, flyash_options, ggbs_options, silica_fume_options, sp_frac_options))
+        grid_df = pd.DataFrame(grid_params, columns=['wb_input', 'flyash_frac', 'ggbs_frac', 'sf_frac', 'sp_frac'])
+        
+        # Use purpose-specific SCM limit instead of hardcoded 0.50
+        scm_limit = purpose_profile.get('scm_limit', 0.5) if purpose_profile else 0.5
+        grid_df = grid_df[grid_df['flyash_frac'] + grid_df['ggbs_frac'] + grid_df['sf_frac'] <= scm_limit]
+    elif enable_hpc:
+        # HPC enabled but no SP - this should be infeasible for silica fume mixes
         silica_fume_options = np.arange(0.0, hpc_options["silica_fume"]["max_frac"] + 1e-9, scm_step/2)
         grid_params = list(product(wb_values, flyash_options, ggbs_options, silica_fume_options))
         grid_df = pd.DataFrame(grid_params, columns=['wb_input', 'flyash_frac', 'ggbs_frac', 'sf_frac'])
+        grid_df['sp_frac'] = 0.0  # No SP for HPC - will likely fail checks
         
-        grid_df = grid_df[grid_df['flyash_frac'] + grid_df['ggbs_frac'] + grid_df['sf_frac'] <= 0.50]
+        scm_limit = purpose_profile.get('scm_limit', 0.5) if purpose_profile else 0.5
+        grid_df = grid_df[grid_df['flyash_frac'] + grid_df['ggbs_frac'] + grid_df['sf_frac'] <= scm_limit]
     else:
+        # Non-HPC case
         grid_params = list(product(wb_values, flyash_options, ggbs_options))
         grid_df = pd.DataFrame(grid_params, columns=['wb_input', 'flyash_frac', 'ggbs_frac'])
         grid_df['sf_frac'] = 0.0
+        grid_df['sp_frac'] = 0.01 if use_sp else 0.0  # Default 1% SP for non-HPC
     
     if grid_df.empty:
         return None, None, []
@@ -1295,18 +1311,29 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     grid_df['ggbs'] = grid_df['binder'] * grid_df['ggbs_frac']
     grid_df['silica_fume'] = grid_df['binder'] * grid_df['sf_frac']
     
-    # FIX: Create base_sp as a Series, not scalar
-    base_sp_series = (0.01 * grid_df['binder']) if use_sp else pd.Series(0.0, index=grid_df.index)
-    
-    if enable_hpc:
+    # CRITICAL FIX: Improved SP calculation logic
+    if enable_hpc and use_sp:
+        # For HPC, use the sp_frac from the grid search
+        grid_df['sp'] = grid_df['sp_frac'] * grid_df['binder']
+        # Apply SP effectiveness boost for silica fume
         sp_multiplier = np.where(
             grid_df['sf_frac'] > 0,
             hpc_options["silica_fume"]["sp_effectiveness_boost"],
             1.0
         )
-        grid_df['sp'] = base_sp_series * sp_multiplier
+        grid_df['sp'] = grid_df['sp'] * sp_multiplier
+    elif use_sp:
+        # For non-HPC, use default 1% or ensure minimum for silica fume if present
+        base_sp_series = 0.01 * grid_df['binder']
+        # Ensure minimum SP for silica fume mixes even in non-HPC mode
+        min_sp_for_sf = np.where(
+            grid_df['sf_frac'] > 0,
+            np.maximum(base_sp_series, 0.015 * grid_df['binder']),
+            base_sp_series
+        )
+        grid_df['sp'] = min_sp_for_sf
     else:
-        grid_df['sp'] = base_sp_series
+        grid_df['sp'] = 0.0
     
     if st_progress:
         st_progress.progress(0.3, text="Calculating aggregate proportions...")
@@ -1371,11 +1398,25 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     grid_df['check_scm'] = grid_df['scm_total_frac'] <= 0.50
     grid_df['check_unit_wt'] = (grid_df['total_mass'] >= 2200.0) & (grid_df['total_mass'] <= 2600.0)
     
+    # CRITICAL FIX: Improved HPC feasibility checks
     if enable_hpc:
         grid_df['fines_content'] = grid_df['fine_wet'] + grid_df['binder'] * grid_df['sf_frac']
         grid_df['sp_frac'] = grid_df['sp'] / grid_df['binder'].replace(0, 1)
-        grid_df['check_hpc_fines'] = grid_df['fines_content'] >= CONSTANTS.HPC_MIN_FINES_CONTENT
-        grid_df['check_hpc_sp'] = grid_df['sp_frac'] >= 0.015
+        
+        # For HPC with silica fume, require minimum SP fraction of 1.5%
+        grid_df['check_hpc_sp'] = np.where(
+            grid_df['sf_frac'] > 0,
+            grid_df['sp_frac'] >= 0.015,
+            True  # No silica fume, so SP check passes
+        )
+        
+        # Use purpose-specific fines content or HPC minimum
+        min_fines_required = max(
+            CONSTANTS.HPC_MIN_FINES_CONTENT,
+            purpose_profile.get('min_fines_content', CONSTANTS.HPC_MIN_FINES_CONTENT) if purpose_profile else CONSTANTS.HPC_MIN_FINES_CONTENT
+        )
+        grid_df['check_hpc_fines'] = grid_df['fines_content'] >= min_fines_required
+        
         grid_df['feasible'] = (
             grid_df['check_wb'] & grid_df['check_min_cem'] &
             grid_df['check_scm'] & grid_df['check_unit_wt'] &
@@ -1398,9 +1439,31 @@ def generate_mix(grade, exposure, nom_max, target_slump, agg_shape,
     
     feasible_candidates_df = grid_df[grid_df['feasible']].copy()
     
+    # NEW: Add diagnostic information when no feasible candidates found
     if feasible_candidates_df.empty:
         trace_df = grid_df.rename(columns={"w_b": "wb", "cost_total": "cost", "co2_total": "co2"})
-        return None, None, trace_df.to_dict('records')
+        
+        # Add diagnostic summary to trace
+        diagnostic = {
+            'total_candidates': len(grid_df),
+            'check_wb_pass': int(grid_df['check_wb'].sum()),
+            'check_min_cem_pass': int(grid_df['check_min_cem'].sum()),
+            'check_scm_pass': int(grid_df['check_scm'].sum()),
+            'check_unit_wt_pass': int(grid_df['check_unit_wt'].sum()),
+        }
+        if enable_hpc:
+            diagnostic.update({
+                'check_hpc_fines_pass': int(grid_df['check_hpc_fines'].sum()),
+                'check_hpc_sp_pass': int(grid_df['check_hpc_sp'].sum()),
+                'candidates_with_silica_fume': int((grid_df['sf_frac'] > 0).sum()),
+                'avg_sp_frac_with_sf': float(grid_df[grid_df['sf_frac'] > 0]['sp_frac'].mean()) if (grid_df['sf_frac'] > 0).sum() > 0 else 0.0,
+            })
+        
+        # Convert trace to dict and add diagnostic
+        trace_dict = trace_df.to_dict('records')
+        trace_dict.append({'diagnostic': diagnostic})
+        
+        return None, None, trace_dict
 
     if not enable_purpose_optimization or purpose == 'General':
         objective_col = 'cost_total' if optimize_cost else 'co2_total'
@@ -1481,7 +1544,14 @@ def generate_baseline(grade, exposure, nom_max, target_slump, agg_shape,
     binder_for_wb = water_target / w_b_limit
     cementitious = min(max(binder_for_wb, min_cem_exp, min_b_grade), max_b_grade)
     actual_wb = water_target / cementitious
-    sp = 0.01 * cementitious if use_sp else 0.0
+    
+    # CRITICAL FIX: Ensure adequate SP for HPC baseline
+    if enable_hpc:
+        # For HPC baseline, use minimum 1.5% SP to ensure workability with silica fume
+        sp = max(0.015 * cementitious, 0.01 * cementitious) if use_sp else 0.0
+    else:
+        sp = 0.01 * cementitious if use_sp else 0.0
+        
     coarse_agg_frac = get_coarse_agg_fraction(nom_max, fine_zone, actual_wb)
     density_fa, density_ca = material_props['sg_fa'] * 1000, material_props['sg_ca'] * 1000
     
@@ -1759,6 +1829,10 @@ def run_generation_logic(inputs: dict, emissions_df: pd.DataFrame, costs_df: pd.
         if opt_df is None or base_df is None:
             st.error("Could not find a feasible mix design with the given constraints. Try adjusting the parameters, such as a higher grade or less restrictive exposure condition.", icon="❌")
             if trace:
+                # Show diagnostic information if available
+                if trace and isinstance(trace[-1], dict) and 'diagnostic' in trace[-1]:
+                    diagnostic = trace[-1]['diagnostic']
+                    st.info(f"Diagnostic: {diagnostic}", icon="🔍")
                 st.dataframe(pd.DataFrame(trace))
             st.session_state.results = {"success": False, "trace": trace}
         else:
@@ -2723,3 +2797,65 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
+    # Internal self-test for HPC functionality (only runs if environment variable is set)
+    if os.getenv("CIVILGPT_SELFTEST", "0") == "1":
+        try:
+            print("🧪 Running HPC self-test...")
+            
+            # Test HPC mix generation
+            test_materials_df = pd.DataFrame({
+                "Material": ["OPC 43", "Fly Ash", "GGBS", "Silica Fume", "Water", "PCE Superplasticizer", "Fine Aggregate", "Coarse Aggregate"],
+                "SpecificGravity": [3.15, 2.2, 2.9, 2.2, 1.0, 1.2, 2.65, 2.70],
+                "MoistureContent": [0, 0, 0, 0, 0, 0, 1.0, 0.5]
+            })
+            
+            test_emissions_df = pd.DataFrame({
+                "Material": ["OPC 43", "Fly Ash", "GGBS", "Silica Fume", "Water", "PCE Superplasticizer", "Fine Aggregate", "Coarse Aggregate"],
+                "CO2_Factor(kg_CO2_per_kg)": [0.85, 0.05, 0.08, 0.1, 0.0, 0.5, 0.01, 0.01]
+            })
+            
+            test_costs_df = pd.DataFrame({
+                "Material": ["OPC 43", "Fly Ash", "GGBS", "Silica Fume", "Water", "PCE Superplasticizer", "Fine Aggregate", "Coarse Aggregate"],
+                "Cost(₹/kg)": [8.0, 4.0, 6.0, 15.0, 0.05, 120.0, 0.5, 0.6]
+            })
+            
+            test_inputs = {
+                "grade": "M60", 
+                "exposure": "Severe", 
+                "nom_max": 20,
+                "target_slump": 100, 
+                "agg_shape": "Angular (baseline)",
+                "fine_zone": "Zone II", 
+                "cement_choice": "OPC 43",
+                "material_props": {'sg_fa': 2.65, 'moisture_fa': 1.0, 'sg_ca': 2.70, 'moisture_ca': 0.5},
+                "use_sp": True, 
+                "optimize_cost": False,
+                "purpose": "RPC/HPC",
+                "enable_purpose_optimization": True,
+                "enable_hpc": True,
+                "calibration_kwargs": {}
+            }
+            
+            opt_df, opt_meta, trace = generate_mix(
+                **test_inputs,
+                emissions=test_emissions_df,
+                costs=test_costs_df,
+                purpose_profiles_data=CONSTANTS.PURPOSE_PROFILES
+            )
+            
+            if opt_df is not None and opt_meta is not None:
+                print("✅ HPC self-test PASSED - Successfully generated HPC mix")
+                print(f"   Grade: {opt_meta['grade']}, Binder: {opt_meta['cementitious']:.1f} kg/m³")
+                print(f"   Silica Fume: {opt_meta.get('silica_fume', 0):.1f} kg/m³")
+                print(f"   SP: {opt_meta.get('sp', 0):.2f} kg/m³")
+                print(f"   w/b: {opt_meta['w_b']:.3f}")
+            else:
+                print("❌ HPC self-test FAILED - Could not generate HPC mix")
+                if trace and isinstance(trace[-1], dict) and 'diagnostic' in trace[-1]:
+                    print(f"   Diagnostic: {trace[-1]['diagnostic']}")
+                    
+        except Exception as e:
+            print(f"❌ HPC self-test ERROR: {e}")
+            import traceback
+            traceback.print_exc()
