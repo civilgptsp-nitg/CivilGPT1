@@ -1,11 +1,3 @@
-💥
-An unexpected error occurred: generate_mix() got an unexpected keyword argument 'max_sf_frac'. Did you mean 'max_ggbs_frac'?
-
-str: Traceback (most recent call last): File "/mount/src/civilgpt1/app.py", line 1852, in run_generation_logic opt_df, opt_meta, trace = generate_mix( ~~~~~~~~~~~~^ inputs["grade"], inputs["exposure"], inputs["nom_max"], ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ ...<9 lines>... **calibration_kwargs ^^^^^^^^^^^^^^^^^^^^ ) ^ TypeError: generate_mix() got an unexpected keyword argument 'max_sf_frac'. Did you mean 'max_ggbs_frac'?
-Traceback:
-Cannot extract the stack trace for this exception. Try calling exception() within the `catch` block.
-
-
 
 import streamlit as st
 import pandas as pd
