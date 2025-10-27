@@ -683,30 +683,44 @@ def load_data(materials_file=None, emissions_file=None, cost_file=None):
             if os.path.exists(p):
                 try:
                     return pd.read_csv(p)
-                except Exception as e: st.warning(f"Could not read {p}: {e}")
+                except Exception as e: 
+                    st.warning(f"Could not read {p}: {e}")
         return None
 
     materials = _safe_read(materials_file, _load_fallback(["materials_library.csv", "data/materials_library.csv"]))
     emissions = _safe_read(emissions_file, _load_fallback(["emission_factors.csv", "data/emission_factors.csv"]))
     costs = _safe_read(cost_file, _load_fallback(["cost_factors.csv", "data/cost_factors.csv"]))
 
-    materials = _normalize_columns(materials, CONSTANTS.MATERIALS_COL_MAP)
-    if materials is not None and not materials.empty and "Material" in materials.columns:
-        materials["Material"] = materials["Material"].astype(str).str.strip()
+    # Defensive handling for each dataframe
+    try:
+        materials = _normalize_columns(materials, CONSTANTS.MATERIALS_COL_MAP)
+        if materials is not None and not materials.empty and "Material" in materials.columns:
+            materials["Material"] = materials["Material"].astype(str).str.strip()
+    except Exception as e:
+        st.warning(f"Error processing materials data: {e}")
+    
     if materials is None or materials.empty or "Material" not in materials.columns:
         st.warning("Could not load 'materials_library.csv'. Using empty library.", icon="ℹ️")
         materials = pd.DataFrame(columns=list(dict.fromkeys(CONSTANTS.MATERIALS_COL_MAP.values())))
 
-    emissions = _normalize_columns(emissions, CONSTANTS.EMISSIONS_COL_MAP)
-    if emissions is not None and not emissions.empty and "Material" in emissions.columns:
-        emissions["Material"] = emissions["Material"].astype(str).str.strip()
+    try:
+        emissions = _normalize_columns(emissions, CONSTANTS.EMISSIONS_COL_MAP)
+        if emissions is not None and not emissions.empty and "Material" in emissions.columns:
+            emissions["Material"] = emissions["Material"].astype(str).str.strip()
+    except Exception as e:
+        st.warning(f"Error processing emissions data: {e}")
+    
     if emissions is None or emissions.empty or "Material" not in emissions.columns or "CO2_Factor(kg_CO2_per_kg)" not in emissions.columns:
         st.warning("⚠️ Could not load 'emission_factors.csv'. CO2 calculations will be zero.")
         emissions = pd.DataFrame(columns=list(dict.fromkeys(CONSTANTS.EMISSIONS_COL_MAP.values())))
                                                                                                      
-    costs = _normalize_columns(costs, CONSTANTS.COSTS_COL_MAP)
-    if costs is not None and not costs.empty and "Material" in costs.columns:
-        costs["Material"] = costs["Material"].astize(str).str.strip()
+    try:
+        costs = _normalize_columns(costs, CONSTANTS.COSTS_COL_MAP)
+        if costs is not None and not costs.empty and "Material" in costs.columns:
+            costs["Material"] = costs["Material"].astype(str).str.strip()  # FIXED: astize -> astype
+    except Exception as e:
+        st.warning(f"Error processing costs data: {e}")
+    
     if costs is None or costs.empty or "Material" not in costs.columns or "Cost(₹/kg)" not in costs.columns:
         st.warning("⚠️ Could not load 'cost_factors.csv'. Cost calculations will be zero.")
         costs = pd.DataFrame(columns=list(dict.fromkeys(CONSTANTS.COSTS_COL_MAP.values())))
@@ -1166,7 +1180,7 @@ def get_compliance_reasons_vectorized(df: pd.DataFrame, exposure: str) -> pd.Ser
     )
     reasons += np.where(
         ~((df['total_mass'] >= 2200) & (df['total_mass'] <= 2600)),
-        "Unit weight outside range (" + df['total_mass'].round(1).astize(str) + " not in 2200-2600); ",
+        "Unit weight outside range (" + df['total_mass'].round(1).astype(str) + " not in 2200-2600); ",
         ""
     )
     
@@ -1176,12 +1190,12 @@ def get_compliance_reasons_vectorized(df: pd.DataFrame, exposure: str) -> pd.Ser
     
     reasons += np.where(
         (sf_frac_series > 0) & (sp_frac_series < 0.015),
-        "Insufficient SP for silica fume (" + (sp_frac_series * 100).round(1).astize(str) + "% < 1.5%); ",
+        "Insufficient SP for silica fume (" + (sp_frac_series * 100).round(1).astype(str) + "% < 1.5%); ",
         ""
     )
     reasons += np.where(
         (sf_frac_series > 0) & (fines_content_series < CONSTANTS.HPC_MIN_FINES_CONTENT),
-        "Insufficient fines for HPC pumpability (" + fines_content_series.round(0).astize(str) + " kg/m³ < " + str(CONSTANTS.HPC_MIN_FINES_CONTENT) + " kg/m³); ",
+        "Insufficient fines for HPC pumpability (" + fines_content_series.round(0).astype(str) + " kg/m³ < " + str(CONSTANTS.HPC_MIN_FINES_CONTENT) + " kg/m³); ",
         ""
     )
     
@@ -1195,7 +1209,7 @@ def sieve_check_fa(df: pd.DataFrame, zone: str):
     try:
         limits, ok, msgs = CONSTANTS.FINE_AGG_ZONE_LIMITS[zone], True, []
         for sieve, (lo, hi) in limits.items():
-            row = df.loc[df["Sieve_mm"].astize(str) == sieve]
+            row = df.loc[df["Sieve_mm"].astype(str) == sieve]  # FIXED: astize -> astype
             if row.empty:
                 ok = False; msgs.append(f"Missing sieve size: {sieve} mm."); continue
             p = float(row["PercentPassing"].iloc[0])
@@ -1209,7 +1223,7 @@ def sieve_check_ca(df: pd.DataFrame, nominal_mm: int):
     try:
         limits, ok, msgs = CONSTANTS.COARSE_LIMITS[int(nominal_mm)], True, []
         for sieve, (lo, hi) in limits.items():
-            row = df.loc[df["Sieve_mm"].astize(str) == sieve]
+            row = df.loc[df["Sieve_mm"].astype(str) == sieve]  # FIXED: astize -> astype
             if row.empty:
                 ok = False; msgs.append(f"Missing sieve size: {sieve} mm."); continue
             p = float(row["PercentPassing"].iloc[0])
@@ -1226,7 +1240,7 @@ def _get_material_factors(materials_list, emissions_df, costs_df):
     co2_factors_dict = {}
     if emissions_df is not None and not emissions_df.empty and "CO2_Factor(kg_CO2_per_kg)" in emissions_df.columns:
         emissions_df_norm = emissions_df.copy()
-        emissions_df_norm['Material'] = emissions_df_norm['Material'].astize(str)
+        emissions_df_norm['Material'] = emissions_df_norm['Material'].astype(str)  # FIXED: astize -> astype
         emissions_df_norm["Material_norm"] = emissions_df_norm["Material"].apply(_normalize_material_value)
         emissions_df_norm = emissions_df_norm.drop_duplicates(subset=["Material_norm"]).set_index("Material_norm")
         co2_factors_dict = emissions_df_norm["CO2_Factor(kg_CO2_per_kg)"].to_dict()
@@ -1234,7 +1248,7 @@ def _get_material_factors(materials_list, emissions_df, costs_df):
     cost_factors_dict = {}
     if costs_df is not None and not costs_df.empty and "Cost(₹/kg)" in costs_df.columns:
         costs_df_norm = costs_df.copy()
-        costs_df_norm['Material'] = costs_df_norm['Material'].astize(str)
+        costs_df_norm['Material'] = costs_df_norm['Material'].astype(str)  # FIXED: astize -> astype
         costs_df_norm["Material_norm"] = costs_df_norm["Material"].apply(_normalize_material_value)
         costs_df_norm = costs_df_norm.drop_duplicates(subset=["Material_norm"]).set_index("Material_norm")
         cost_factors_dict = costs_df_norm["Cost(₹/kg)"].to_dict()
@@ -2053,7 +2067,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
             if materials_df is not None and not materials_df.empty:
                 # FIX: Safe column access for Material column
                 if "Material" in materials_df.columns:
-                    material_names = [str(m).lower() for m in materials_df["Material"].astize(str).tolist()]
+                    material_names = [str(m).lower() for m in materials_df["Material"].astype(str).tolist()]  # FIXED: astize -> astype
                     silica_fume_in_library = any("silica fume" in name or "microsilica" in name for name in material_names)
             
             if not silica_fume_in_library:
@@ -2607,7 +2621,7 @@ def run_manual_interface(purpose_profiles_data: dict, materials_df: pd.DataFrame
                 st.download_button("📈 Download Excel Report", data=excel_buffer.getvalue(), file_name="CivilGPT_Mix_Designs.xlsx", mime="application/vnd.ms-excel", use_container_width=True)
             with d2:
                 st.download_button("✔️ Optimized Mix (CSV)", data=opt_df.to_csv(index=False).encode("utf-8"), file_name="optimized_mix.csv", mime="text/csv", use_container_width=True)
-                st.download_button("✖️ Baseline Mix (CSV)", data=base_df.to_csv(index=False).encode("utf-8"), file_name="baseline_mix.csv", mime="text/csv", use_container_width=True)
+                st.download_button("✖️ Baseline Mix (CSV)", data=base_df.to_csv(index=False).encode("utf-8)", file_name="baseline_mix.csv", mime="text/csv", use_container_width=True)
 
         elif selected_tab == "🔬 **Lab Calibration**":
             st.header("🔬 Lab Calibration Analysis")
