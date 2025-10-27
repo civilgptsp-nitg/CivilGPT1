@@ -1,10 +1,3 @@
-💥
-An unexpected error occurred: Cannot set a DataFrame with multiple columns to the single column sp
-
-str: Traceback (most recent call last): File "/mount/src/civilgpt1/app.py", line 1857, in run_generation_logic opt_df, opt_meta, trace = generate_mix( ~~~~~~~~~~~~^ inputs["grade"], inputs["exposure"], inputs["nom_max"], ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ ...<9 lines>... **calibration_kwargs ^^^^^^^^^^^^^^^^^^^^ ) ^ File "/mount/src/civilgpt1/app.py", line 1408, in generate_mix grid_df['sp'] = grid_df.apply( ~~~~~~~^^^^^^ File "/home/adminuser/venv/lib/python3.13/site-packages/pandas/core/frame.py", line 4312, in __setitem__ self._set_item_frame_value(key, value) ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^ File "/home/adminuser/venv/lib/python3.13/site-packages/pandas/core/frame.py", line 4470, in _set_item_frame_value raise ValueError( ...<2 lines>... ) ValueError: Cannot set a DataFrame with multiple columns to the single column sp
-Traceback:
-Cannot extract the stack trace for this exception. Try calling exception() within the `catch` block.
-
 import streamlit as st
 import pandas as pd
 import numpy as np
